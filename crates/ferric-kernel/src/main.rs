@@ -11,6 +11,7 @@
 #![no_main]
 #![forbid(unsafe_code)]
 
+#[cfg(not(test))]
 use core::panic::PanicInfo;
 
 // Linker glue: nothing in this crate references `ferric-unsafe-core` yet, so
@@ -22,6 +23,8 @@ use core::panic::PanicInfo;
 static KEEP_UNSAFE_CORE_LINKED: [fn() -> !; 1] = [ferric_unsafe_core::halt];
 
 /// Temporary panic handler.
+
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {

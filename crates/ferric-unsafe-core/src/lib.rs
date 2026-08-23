@@ -15,16 +15,33 @@
 //!
 //! This crate intentionally does *not* carry `#![forbid(unsafe_code)]`; every
 //! other workspace crate does. See ARCHITECTURE.md.
-#![no_std]
+//
+// `no_std` is dropped under `cfg(test)` so the Limine ABI layout can be
+// unit-tested on the host (the test harness needs std; the kernel code
+// itself only ever uses `core::`, which std re-exports).
+// `linkage` backs the weak mem* shims in `mem.rs`; host builds never see it.
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), feature(linkage))]
 
-/// Temporary process entry symbol so the skeleton links as an ELF executable.
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
+pub mod arch;
+pub mod limine;
+// Kernel-runtime only: defining `memcpy` etc. on the host would collide with
+// the platform CRT when linking the test harness.
+#[cfg(not(test))]
+pub mod mem;
+
+/// Common early-boot path, reached from the architecture entry points
+/// immediately after bootloader handoff.
+///
+/// Still running on the bootloader-provided stack at this point (>= 64 KiB,
+/// return address 0 pushed — Limine protocol, "Machine State at Entry").
+pub fn boot() -> ! {
+    let _boot_info = limine::collect();
     halt()
 }
 
-/// Halts the CPU forever.
-/// Placeholder spin-halt.
+/// Parks the CPU forever.
+
 pub fn halt() -> ! {
     loop {
         core::hint::spin_loop();

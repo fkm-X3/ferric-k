@@ -1,8 +1,6 @@
 # Ferric-K Architecture
 
-This document states the boundary rules every change must obey, followed by the
-decision log (append-only). When code and this document disagree, one of them is
-wrong and must be fixed before the next commit.
+This document states the boundary rules every change must obey. When code and this document disagree, one of them is wrong and must be fixed before the next commit.
 
 ## Crate layering
 
@@ -62,18 +60,23 @@ wrong and must be fixed before the next commit.
   - **aarch64**: `+strict-align` (do not assume unaligned access is permitted
     at EL1), `+neon` (explicit SIMD register availability for LLVM), same
     panic/relocation policy as x86_64.
-- `.cargo/config.toml` enables `build-std = ["core", "compiler_builtins"]`
-  globally plus `json-target-spec` (required for JSON specs on current
-  nightlies).
+- `-Zbuild-std = ["core", "compiler_builtins"]` and `-Zjson-target-spec` are
+  required to build for these specs on the pinned nightly. They are passed
+  **explicitly per kernel-target invocation** in `scripts/check.ps1` — never as
+  a global `.cargo/config.toml` `[unstable]` table, which would also apply to
+  host builds and rebuild `core` behind std (duplicate-lang-item breakage).
 
 ## Quality gates
 
 `scripts/check.ps1` must pass before any commit:
-fmt → clippy (both targets, `-D warnings`) → build both targets → ELF sanity.
-Warnings-as-errors is enforced at the clippy stage rather than via
+
+fmt → clippy (host: libs + tests) → clippy (both custom targets,
+`-D warnings`) → build both targets (+ ELF sanity) → Limine structural gate
+(x86_64 image: higher-half entry window, PT_LOAD alignment/base, byte-exact
+`.limine_requests` contents) → host unit tests.
+
+Warnings-as-errors is enforced at the clippy stages rather than via
 `RUSTFLAGS=-Dwarnings` on raw builds, because `-D warnings` applied to
 `build-std` compilations of *upstream* sources would break builds on unrelated
-upstream warnings.
-
-Host-side tests run without `--target` and get their
-own clippy pass added to the gate then.
+upstream warnings. The freestanding kernel bin is never built for the host; its
+panic handler is `#[cfg(not(test))]` so its implicit test target can use std's.

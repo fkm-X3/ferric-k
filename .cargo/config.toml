@@ -1,9 +1,18 @@
 # Ferric-K cargo configuration.
 #
-# All kernel targets are custom JSON specs under targets/ — no prebuilt std
-# exists for them, so core + compiler_builtins are always built from source.
-[unstable]
-build-std = ["core", "compiler_builtins"]
-# Custom targets are defined as JSON specs (targets/*.json); recent nightlies
-# require this flag for them.
-json-target-spec = true
+# NOTE on build-std: `-Zbuild-std` / `-Zjson-target-spec` deliberately live
+# NOT here. A global `[unstable] build-std` also applies to *host* builds
+# (e.g. `cargo test`), where cargo would then build a second `core` that
+# collides with the prebuilt one behind std ("duplicate lang item `core`").
+# Kernel-target invocations pass the flags explicitly — see scripts/check.ps1
+# and ARCHITECTURE.md D-12.
+
+# x86_64: link with the higher-half Limine layout (kernels/x86_64.ld) and pin
+# the loader page size so every PT_LOAD gets p_align = 4 KiB regardless of
+# linker defaults.
+[target.x86_64-ferric]
+rustflags = [
+    "-C", "link-arg=-Tkernels/x86_64.ld",
+    "-C", "link-arg=-z",
+    "-C", "link-arg=max-page-size=0x1000",
+]
