@@ -1,2 +1,3 @@
-
-*/target
+/target
+/third_party/
+Cargo.lock.bak
