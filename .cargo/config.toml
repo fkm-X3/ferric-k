@@ -1,0 +1,9 @@
+# Ferric-K cargo configuration.
+#
+# All kernel targets are custom JSON specs under targets/ — no prebuilt std
+# exists for them, so core + compiler_builtins are always built from source.
+[unstable]
+build-std = ["core", "compiler_builtins"]
+# Custom targets are defined as JSON specs (targets/*.json); recent nightlies
+# require this flag for them.
+json-target-spec = true

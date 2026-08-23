@@ -1,0 +1,11 @@
+[package]
+name = "ferric-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Arch-neutral traits and types forming Ferric-K's safe/unsafe boundary contract."
+
+[dependencies]
+
+[lints]
+workspace = true

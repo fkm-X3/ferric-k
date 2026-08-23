@@ -1,0 +1,12 @@
+[package]
+name = "ferric-safe-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Safe platform-independent kernel logic: console, font parsing, logging, shell."
+
+[dependencies]
+ferric-api.workspace = true
+
+[lints]
+workspace = true

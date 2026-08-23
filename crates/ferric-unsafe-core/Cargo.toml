@@ -1,0 +1,12 @@
+[package]
+name = "ferric-unsafe-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The only crate permitted to contain unsafe code: entry, drivers, locks, Limine ABI."
+
+[dependencies]
+ferric-api.workspace = true
+
+[lints]
+workspace = true

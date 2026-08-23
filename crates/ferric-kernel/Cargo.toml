@@ -1,0 +1,18 @@
+[package]
+name = "ferric-kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The Ferric-K kernel binary: wires unsafe-core init into the safe kernel main."
+
+[[bin]]
+name = "ferric-kernel"
+path = "src/main.rs"
+
+[dependencies]
+ferric-api.workspace = true
+ferric-unsafe-core.workspace = true
+ferric-safe-core.workspace = true
+
+[lints]
+workspace = true

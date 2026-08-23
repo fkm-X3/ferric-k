@@ -1,0 +1,7 @@
+# Normalize everything to LF in the repository. Kernels break subtly when
+# linker scripts / assembly sources pick up CRLF on Windows checkouts.
+* text=auto eol=lf
+
+# Explicit binary types (never normalize).
+*.png binary
+*.psf binary

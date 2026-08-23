@@ -1,0 +1,27 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/ferric-api",
+    "crates/ferric-unsafe-core",
+    "crates/ferric-safe-core",
+    "crates/ferric-kernel",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+ferric-api = { path = "crates/ferric-api" }
+ferric-unsafe-core = { path = "crates/ferric-unsafe-core" }
+ferric-safe-core = { path = "crates/ferric-safe-core" }
+
+# Shared lint policy — every crate opts in via `[lints] workspace = true`.
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+# Note: clippy::all is warn-by-default; scripts/check.ps1 upgrades it to deny
+# via -D warnings (an explicit `all = "warn"` here trips lint_groups_priority).
