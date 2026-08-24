@@ -15,9 +15,6 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepoRoot
 try {
-    # ------------------------------------------------------------------
-    # Fixed layout constants (bytes unless stated otherwise).
-    # ------------------------------------------------------------------
     $SectorSize                = 512
     $Heads                     = 64      # geometry: 64 * 32 sectors == 1 MiB/cylinder
     $SectorsPerTrack           = 32
@@ -40,9 +37,8 @@ try {
         Ok $What
     }
 
-    # CHS triple encoded per the MBR convention: head byte, then sector in the
-    # low 6 bits plus cylinder bits 8-9 in the high 2 bits, then cylinder
-    # bits 0-7. Values beyond the representable range clamp to 63/255/1023.
+    # MBR CHS encoding: head byte, sector low 6 bits + cylinder bits 8-9 in
+    # the high 2, cylinder bits 0-7; out-of-range clamps to 63/255/1023.
     function ConvertTo-ChsBytes([uint32]$Lba) {
         $spt   = $SectorsPerTrack
         $head  = [Math]::Min(255, [int](($Lba / $spt) % $Heads))
@@ -53,9 +49,6 @@ try {
                  [byte]($cyl -band 0xFF))
     }
 
-    # ------------------------------------------------------------------
-    # Inputs
-    # ------------------------------------------------------------------
     Step 'Inputs'
     foreach ($Tool in @('mformat', 'mmd', 'mcopy', 'mdir')) { Assert-Tool $Tool }
 
@@ -95,8 +88,7 @@ try {
     $PartStartSector  = [uint32]$FirstPartStartSector
     $PartSectors      = [uint32]($TotalSectors - $FirstPartStartSector)
 
-    # Fixed-size raw image (preallocated, not sparse: mtools/QEMU treat holes
-    # inconsistently across filesystems).
+    # Preallocated, not sparse: mtools/QEMU treat holes inconsistently.
     $Stream = [IO.File]::Create($ImagePath)
     try { $Stream.SetLength([int64]$TotalSectors * $SectorSize) } finally { $Stream.Dispose() }
 
@@ -117,9 +109,6 @@ try {
             (Split-Path -Leaf $ImagePath), $SizeMb, $FatTypeWithLba,
             $PartStartSector, ($PartSectors * $SectorSize / 1MB))
 
-    # ------------------------------------------------------------------
-    # Filesystem + staging (offset syntax: -i image@@byteOffset)
-    # ------------------------------------------------------------------
     Step 'Format FAT'
     $Off = [int64]$PartStartSector * $SectorSize
     $ImgAtOff = "{0}@@{1}" -f $ImagePath, $Off
@@ -148,9 +137,6 @@ try {
     Write-Host (($InstallLog | ForEach-Object { "        $_" }) -join "`n") `
         -ForegroundColor DarkGray
 
-    # ------------------------------------------------------------------
-    # Validation: FS listing + proof the MBR was actually overwritten
-    # ------------------------------------------------------------------
     Step 'Validate image'
     $Listing = @(mdir -i $ImgAtOff ::) + @(mdir -i $ImgAtOff '::EFI/BOOT')
     if ($LASTEXITCODE -ne 0) { throw 'mdir validation failed' }

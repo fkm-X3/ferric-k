@@ -9,9 +9,7 @@ $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepoRoot
 try {
-    # Flags every kernel-target cargo invocation needs now that the global
-    # `[unstable] build-std` was removed from .cargo/config.toml (it poisoned
-    # host builds by rebuilding `core`; see ARCHITECTURE.md D-12).
+    # Global [unstable] build-std would poison host builds; flags go per-invocation.
     $KernelCargoArgs = @('-Zbuild-std=core,compiler_builtins', '-Zjson-target-spec')
 
     $script:StepNumber = 0
@@ -59,10 +57,7 @@ try {
         return -1
     }
 
-    # ------------------------------------------------------------------
-    # Permanent Limine Boot Protocol structural gate (x86_64 image).
-    # crates/ferric-unsafe-core/src/limine.rs (Limine PROTOCOL.md).
-    # ------------------------------------------------------------------
+    # Structural gate on .limine_requests (Limine PROTOCOL.md).
     function Invoke-LimineElfGate([string]$ElfPath) {
         $StartMarker = @(
             [Convert]::ToUInt64('F6B8F4B39DE7D1AE', 16),
@@ -74,8 +69,7 @@ try {
             [Convert]::ToUInt64('ADC0E0531BB10D03', 16),
             [Convert]::ToUInt64('9572709F31764C62', 16)
         )
-        # Magic/ID words every image must contain somewhere in the section
-        # (LE byte order). Ordered so failures report deterministically.
+        # Required words (LE), ordered so failures report deterministically.
         $RequiredWords = [ordered]@{
             'base-revision-magic' = 'F9562B2D5C95A6C8'
             'hhdm-request-id'     = '48DCF1CB8AD2B852'
@@ -96,7 +90,6 @@ try {
         }
         Write-Host ("    [ok] entry 0x{0:X} in higher-half window" -f $Entry) -ForegroundColor Green
 
-        # --- Program headers: first PT_LOAD at the base, all 4K aligned --
         $PhOff      = [int](Read-U64 $Bytes 0x20)
         $PhEntSize  = Read-U16 $Bytes 0x36
         $PhNum      = Read-U16 $Bytes 0x38
@@ -122,7 +115,6 @@ try {
         Write-Host ("    [ok] {0} PT_LOAD segments, first at base, p_align=4KiB" -f $SeenLoad) `
             -ForegroundColor Green
 
-        # --- Locate .limine_requests via the section header string table -
         $ShOff     = [int](Read-U64 $Bytes 0x28)
         $ShEntSize = Read-U16 $Bytes 0x3A
         $ShNum     = Read-U16 $Bytes 0x3C
@@ -153,7 +145,7 @@ try {
             }
             $Content = $Bytes[$Off..($Off + $Len - 1)]
 
-            # Start marker must be the first 32 bytes...
+            # Start marker first, end marker last.
             for ($w = 0; $w -lt 4; $w++) {
                 $Want = Get-LeHex $StartMarker[$w]
                 $Got  = Get-LeHex (Read-U64 $Content (8 * $w))
@@ -162,7 +154,6 @@ try {
                             $ElfPath, $w, $Got, $Want)
                 }
             }
-            # ...and the end marker the final 16 bytes.
             for ($w = 0; $w -lt 2; $w++) {
                 $Want = Get-LeHex $EndMarker[$w]
                 $Got  = Get-LeHex (Read-U64 $Content ($Len - 16 + 8 * $w))
@@ -171,7 +162,6 @@ try {
                             $ElfPath, $w, $Got, $Want)
                 }
             }
-            # Base revision magic + one ID word per requested feature.
             foreach ($Label in $RequiredWords.Keys) {
                 $Hex = $RequiredWords[$Label]
                 # Walk the hex string back-to-front so pairs land LE:
@@ -192,34 +182,21 @@ try {
         Fail "${ElfPath}: .limine_requests section not found"
     }
 
-    # ------------------------------------------------------------------
-    # 1. Formatting
-    # ------------------------------------------------------------------
     Step 'cargo fmt --check'
     cargo fmt --all --check
     Assert-ExitCode $LASTEXITCODE 'formatting'
 
-    # ------------------------------------------------------------------
-    # 2. Host-side clippy: libs and test code (the freestanding bin itself
-    #    can never be checked for the host; it is covered by steps 3-4).
-    # ------------------------------------------------------------------
+    # The freestanding bin cannot be checked on the host; target clippy covers it.
     Step 'clippy (host: libs + tests)'
     cargo clippy --workspace --lib --tests -- -D warnings
     Assert-ExitCode $LASTEXITCODE 'clippy (host)'
 
-    # ------------------------------------------------------------------
-    # 3-4. Clippy against both kernel targets.
-    # ------------------------------------------------------------------
     foreach ($Target in @('x86_64-ferric', 'aarch64-ferric')) {
         Step "clippy --target $Target"
         cargo clippy --workspace --target "targets/$Target.json" @KernelCargoArgs -- -D warnings
         Assert-ExitCode $LASTEXITCODE "clippy ($Target)"
     }
 
-    # ------------------------------------------------------------------
-    # 5-6. Build both targets; sanity-check each produced kernel ELF;
-    #      run the full Limine structural gate on the x86_64 image.
-    # ------------------------------------------------------------------
     $Expectations = @{
         'x86_64-ferric'  = @{ Machine = 0x3E; Name = 'EM_X86_64'; Limine = $true }
         'aarch64-ferric' = @{ Machine = 0xB7; Name = 'EM_AARCH64'; Limine = $false }
@@ -257,20 +234,11 @@ try {
         }
     }
 
-    # ------------------------------------------------------------------
-    # 7. Host unit tests (Limine ABI layout contracts et al.)
-    # ------------------------------------------------------------------
     Step 'test (host: ferric-unsafe-core)'
     cargo test -p ferric-unsafe-core --lib
     Assert-ExitCode $LASTEXITCODE 'host tests'
 
-    # ------------------------------------------------------------------
-    # 8. Boot proof: disk image + headless QEMU boot through Limine.
-    #    The kernel signals completed early init via isa-debug-exit;
-    #    run.ps1 asserts the resulting exit code (see qemu.rs).
-    #    Child scripts exit non-zero on failure, which terminates this
-    #    gate with their diagnostics on record.
-    # ------------------------------------------------------------------
+    # Kernel proves early init via isa-debug-exit; run.ps1 asserts the code.
     Step 'disk image + QEMU smoke boot'
     & (Join-Path $PSScriptRoot 'build-image.ps1')
     if ($LASTEXITCODE -ne 0) { Fail 'image build' }

@@ -22,9 +22,6 @@ try {
         $script:Failed = $true
     }
 
-    # ------------------------------------------------------------------
-    # 1. Rust nightly toolchain: exact pin from rust-toolchain.toml
-    # ------------------------------------------------------------------
     Step 'Rust toolchain'
     $ToolchainToml = Get-Content (Join-Path $RepoRoot 'rust-toolchain.toml') -Raw
     if ($ToolchainToml -notmatch '(?m)^\s*channel\s*=\s*"([^"]+)"') {
@@ -59,9 +56,6 @@ try {
         }
     }
 
-    # ------------------------------------------------------------------
-    # 2. MSYS2/UCRT64 packages
-    # ------------------------------------------------------------------
     Step 'MSYS2 packages'
     $Pacman = Get-Command pacman -ErrorAction SilentlyContinue
     if (-not $Pacman) {
@@ -87,20 +81,15 @@ try {
         }
     }
 
-    # ------------------------------------------------------------------
-    # 3. Limine: pinned release, SHA-256 verified (ARCHITECTURE.md D-05)
-    # ------------------------------------------------------------------
     Step 'Limine bootloader'
 
-    # Pinned inputs. Bumping Limine = editing these three lines as a deliberate. 
-    # Digest is the GitHub release asset digest.
+    # Bumping Limine means editing these three values deliberately.
     $LimineVersion = 'v12.6.0'
     $LimineUrl = 'https://github.com/Limine-Bootloader/Limine/releases/download/v12.6.0/limine-binary.zip'
     $LimineSha256 = 'cbbc0a68da766faf05c14fdde31710563c5e6a89b6f2b012a57540d0cfdce822'
 
     $LimineDir = Join-Path $RepoRoot 'third_party\limine'
-    # Files the image build depends on. Located by name
-    # anywhere inside the archive so upstream layout reshuffles don't break us.
+    # Located by name anywhere in the archive so upstream reshuffles don't break us.
     $RequiredFiles = @(
         'limine.exe',           # host-side image installer (BIOS install step)
         'limine-bios.sys',      # BIOS stage payload staged into the image
@@ -157,9 +146,6 @@ deliberately and record it in ARCHITECTURE.md.
         Ok "limine $LimineVersion materialized into third_party/limine/"
     }
 
-    # ------------------------------------------------------------------
-    # Summary
-    # ------------------------------------------------------------------
     Write-Host ''
     if ($script:Failed) {
         Write-Host 'BOOTSTRAP FAILED — fix the items marked [FAIL] above.' -ForegroundColor Red

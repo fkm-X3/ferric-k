@@ -2,17 +2,10 @@
 
 use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
 
-// ---------------------------------------------------------------------------
-// Protocol-wide constants
-// ---------------------------------------------------------------------------
-
-/// `LIMINE_COMMON_MAGIC` — first two words of every request ID.
+/// `LIMINE_COMMON_MAGIC`.
 const COMMON_MAGIC: [u64; 2] = [0xc7b1dd30df4c8b88, 0x0a82e883a194f07b];
 
-/// `LIMINE_REQUESTS_START_MARKER` — start delimiter, 4 x u64.
-///
-/// From base revision 2 onward the loader *must* honour these delimiters if
-/// present; only requests between them are considered.
+/// `LIMINE_REQUESTS_START_MARKER`.
 const REQUESTS_START_MARKER: [u64; 4] = [
     0xf6b8f4b39de7d1ae,
     0xfab91a6940fcb9cf,
@@ -20,27 +13,16 @@ const REQUESTS_START_MARKER: [u64; 4] = [
     0x181e920a7852b9d9,
 ];
 
-/// `LIMINE_REQUESTS_END_MARKER` — end delimiter, 2 x u64.
+/// `LIMINE_REQUESTS_END_MARKER`.
 const REQUESTS_END_MARKER: [u64; 2] = [0xadc0e0531bb10d03, 0x9572709f31764c62];
 
-/// `LIMINE_BASE_REVISION(N)` magic — first two words of the base-revision tag.
+/// `LIMINE_BASE_REVISION(N)` tag magic.
 const BASE_REVISION_TAG_MAGIC: [u64; 2] = [0xf9562b2d5c95a6c8, 0x6a7b384944536bdc];
 
-/// Base revision Ferric-K requests (`N` in `LIMINE_BASE_REVISION(N)`).
+/// Base revision Ferric-K requests.
 pub const REQUESTED_BASE_REVISION: u64 = 4;
 
-// ---------------------------------------------------------------------------
-// Request/response plumbing
-// ---------------------------------------------------------------------------
-
-/// A protocol feature request: `struct limine_<feature>_request`.
-///
-/// C layout (48 bytes):
-/// ```text
-/// 0x00: id[4]       — LIMINE_COMMON_MAGIC + the feature's two ID words
-/// 0x20: revision    — request revision provided by us (0)
-/// 0x28: response    — AtomicPtr<R>, filled by the loader before handoff
-/// ```
+/// `struct limine_<feature>_request`: `id[4]`, `revision`, `response` (48 bytes).
 #[repr(C)]
 pub struct Request<R> {
     id: [u64; 4],
@@ -49,7 +31,6 @@ pub struct Request<R> {
 }
 
 impl<R> Request<R> {
-    /// Builds a request with the given full 4-word ID.
     pub(crate) const fn new(id: [u64; 4]) -> Self {
         Self {
             id,
@@ -60,10 +41,8 @@ impl<R> Request<R> {
 }
 
 impl<R> Request<R> {
-    /// The response published by the loader, if this feature was provided.
-    ///
-    /// Absence is legitimate per-feature (e.g. no framebuffer attached);
-    /// callers decide what is mandatory for them.
+    /// Loader-published response, if the feature was provided; absence is
+    /// legitimate per-feature.
     pub fn response(&self) -> Option<&'static R> {
         let ptr = self.response.load(Ordering::Acquire);
         if ptr.is_null() {
@@ -82,26 +61,16 @@ const fn feature_id(a: u64, b: u64) -> [u64; 4] {
     [COMMON_MAGIC[0], COMMON_MAGIC[1], a, b]
 }
 
-// ---------------------------------------------------------------------------
-// Feature: HHDM (Higher Half Direct Map)
-// ---------------------------------------------------------------------------
-
 /// `LIMINE_HHDM_REQUEST_ID`.
 const HHDM_REQUEST_ID: [u64; 4] = feature_id(0x48dcf1cb8ad2b852, 0x63984e959a98244b);
 
-/// `struct limine_hhdm_response` (16 bytes).
+/// `struct limine_hhdm_response`.
 #[repr(C)]
 pub struct HhdmResponse {
-    /// Response revision provided by the loader.
     pub revision: u64,
-    /// `offset` — virtual address offset of the direct map. Any HHDM-based
-    /// pointer minus this offset is its physical address.
+    /// Virtual offset of the direct map: virtual − offset = physical.
     pub offset: u64,
 }
-
-// ---------------------------------------------------------------------------
-// Feature: Framebuffer
-// ---------------------------------------------------------------------------
 
 /// `LIMINE_FRAMEBUFFER_REQUEST_ID`.
 const FRAMEBUFFER_REQUEST_ID: [u64; 4] = feature_id(0x9d5827dcd881dd75, 0xa3148604f6fab11b);
@@ -109,19 +78,16 @@ const FRAMEBUFFER_REQUEST_ID: [u64; 4] = feature_id(0x9d5827dcd881dd75, 0xa31486
 /// `LIMINE_FRAMEBUFFER_RGB` — linear RGB `memory_model`.
 pub const MEMORY_MODEL_RGB: u8 = 1;
 
-/// `struct limine_framebuffer_response` (24 bytes).
+/// `struct limine_framebuffer_response`.
 #[repr(C)]
 pub struct FramebufferResponse {
-    /// Response revision provided by the loader.
     pub revision: u64,
-    /// `framebuffer_count`.
     pub framebuffer_count: u64,
-    /// `framebuffers` — array of `framebuffer_count` pointers.
     framebuffers: *mut *mut Framebuffer,
 }
 
 impl FramebufferResponse {
-    /// All framebuffers the loader gave us, as safe references.
+    /// All framebuffers the loader gave us.
     pub fn framebuffers(&self) -> &[&'static Framebuffer] {
         // SAFETY: `framebuffers` points at an array of exactly
         // `framebuffer_count` pointers published before handoff. The protocol
@@ -138,54 +104,29 @@ impl FramebufferResponse {
     }
 }
 
-/// `struct limine_framebuffer` (80 bytes).
-///
-/// C layout:
-/// ```text
-/// 0x00 address           0x20 bpp(u16)         0x40 mode_count
-/// 0x08 width             0x22 memory_model     0x48 modes
-/// 0x10 height            0x23..0x29 masks      (= size 0x50)
-/// 0x18 pitch             0x29 _unused[7]
-///                        0x30 edid_size
-///                        0x38 edid
-/// ```
-/// The tail (`mode_count`/`modes`) is present since response revision 1;
-/// treat both as optional.
+/// `struct limine_framebuffer`; the tail (`mode_count`/`modes`) exists only
+/// for response revision >= 1.
 #[repr(C)]
 pub struct Framebuffer {
-    /// `address` — HHDM virtual address of the linear framebuffer.
     address: *mut core::ffi::c_void,
-    /// `width` in pixels.
     pub width: u64,
-    /// `height` in pixels.
     pub height: u64,
-    /// `pitch` — bytes per scanline (>= width * bpp / 8).
+    /// Bytes per scanline (>= width * bpp / 8).
     pub pitch: u64,
-    /// `bpp` — bits per pixel.
     pub bpp: u16,
-    /// `memory_model` — see [`MEMORY_MODEL_RGB`].
+    /// See [`MEMORY_MODEL_RGB`].
     pub memory_model: u8,
-    /// `red_mask_size`.
     pub red_mask_size: u8,
-    /// `red_mask_shift`.
     pub red_mask_shift: u8,
-    /// `green_mask_size`.
     pub green_mask_size: u8,
-    /// `green_mask_shift`.
     pub green_mask_shift: u8,
-    /// `blue_mask_size`.
     pub blue_mask_size: u8,
-    /// `blue_mask_shift`.
     pub blue_mask_shift: u8,
-    /// `unused[7]` — padding up to `edid_size`.
     _unused: [u8; 7],
-    /// `edid_size` — bytes of EDID at `edid`, or 0.
+    /// EDID length at `edid`, or 0.
     pub edid_size: u64,
-    /// `edid` — raw EDID blob (HHDM pointer), possibly NULL.
     edid: *mut core::ffi::c_void,
-    /// `mode_count` — available video modes (response revision >= 1).
     pub mode_count: u64,
-    /// `modes` — array of `mode_count` pointers (response revision >= 1).
     modes: *mut *mut VideoMode,
 }
 
@@ -195,7 +136,6 @@ impl Framebuffer {
         self.address.cast::<u8>()
     }
 
-    /// True if the surface is linear RGB (the only model Ferric-K renders).
     pub fn is_rgb(&self) -> bool {
         self.memory_model == MEMORY_MODEL_RGB
     }
@@ -214,7 +154,7 @@ impl Framebuffer {
     }
 }
 
-/// `struct limine_video_mode` (40 bytes: 24 + 2 + 7 payload, padded to 8).
+/// `struct limine_video_mode`.
 #[repr(C)]
 pub struct VideoMode {
     pub pitch: u64,
@@ -230,15 +170,10 @@ pub struct VideoMode {
     pub blue_mask_shift: u8,
 }
 
-// ---------------------------------------------------------------------------
-// Feature: Memory Map
-// ---------------------------------------------------------------------------
-
 /// `LIMINE_MEMMAP_REQUEST_ID`.
 const MEMMAP_REQUEST_ID: [u64; 4] = feature_id(0x67cf3d9d378a806f, 0xe304acdfc50c3c62);
 
-/// Region types (`LIMINE_MEMMAP_*` constants), stored verbatim in
-/// [`MemmapEntry::entry_type`] — the set may grow, so it is kept as `u64`.
+/// `LIMINE_MEMMAP_*` region types, stored verbatim in [`MemmapEntry::entry_type`].
 pub mod memmap_type {
     pub const USABLE: u64 = 0;
     pub const RESERVED: u64 = 1;
@@ -251,19 +186,16 @@ pub mod memmap_type {
     pub const RESERVED_MAPPED: u64 = 8;
 }
 
-/// `struct limine_memmap_response` (24 bytes).
+/// `struct limine_memmap_response`.
 #[repr(C)]
 pub struct MemmapResponse {
-    /// Response revision provided by the loader.
     pub revision: u64,
-    /// `entry_count`.
     pub entry_count: u64,
-    /// `entries` — array of `entry_count` pointers.
     entries: *mut *mut MemmapEntry,
 }
 
 impl MemmapResponse {
-    /// All memory map entries, as safe references.
+    /// All memory map entries.
     pub fn entries(&self) -> &[&'static MemmapEntry] {
         // SAFETY: identical reasoning to `FramebufferResponse::framebuffers`:
         // loader-published array of non-NULL pointers, valid forever from our
@@ -277,42 +209,29 @@ impl MemmapResponse {
     }
 }
 
-/// `struct limine_memmap_entry` (24 bytes, no trailing padding).
+/// `struct limine_memmap_entry`.
 #[repr(C)]
 pub struct MemmapEntry {
-    /// `base` — physical start address.
+    /// Physical start address.
     pub base: u64,
-    /// `length` — bytes.
+    /// Length in bytes.
     pub length: u64,
-    /// `type` — one of the [`memmap_type`] constants ("type" is reserved in
-    /// Rust, hence the field name).
+    /// `type` in the C struct ("type" is reserved in Rust).
     pub entry_type: u64,
 }
 
-// ---------------------------------------------------------------------------
-// Delimiters, base-revision tag, and the actual requests
-// ---------------------------------------------------------------------------
-
-/// Start delimiter: `LIMINE_REQUESTS_START_MARKER` (4 x u64 = 32 bytes),
-/// 8-byte aligned per protocol.
+/// Start delimiter, 32 bytes, 8-byte aligned per protocol.
 #[repr(C, align(8))]
 struct RequestsStartMarker([u64; 4]);
 
-/// End delimiter: `LIMINE_REQUESTS_END_MARKER` (2 x u64 = 16 bytes),
-/// 8-byte aligned per protocol.
+/// End delimiter, 16 bytes, 8-byte aligned per protocol.
 #[repr(C, align(8))]
 struct RequestsEndMarker([u64; 2]);
 
-/// `LIMINE_BASE_REVISION(N)` tag: `{ magic[2], requested_revision }`
-/// (3 x u64 = 24 bytes), 8-byte aligned per protocol.
-///
-/// Both `magic1` and `requested_revision` are atomic because the loader
-/// writes them before handoff:
-/// - `requested_revision`: set to 0 iff the loader accepted our base
-///   revision (`LIMINE_BASE_REVISION_SUPPORTED` checks `[2] == 0`).
-/// - `magic1`: left untouched if we were booted at exactly the requested
-///   revision; otherwise rewritten with the revision actually used
-///   (`LIMINE_LOADED_BASE_REVISION*` semantics, loaders supporting rev >= 3).
+/// `LIMINE_BASE_REVISION(N)` tag (24 bytes, 8-byte aligned); atomics because
+/// the loader writes before handoff: `requested_revision` becomes 0 iff the
+/// requested base revision was accepted, and `magic1` is rewritten with the
+/// revision actually used when it differs from the request.
 #[repr(C, align(8))]
 struct BaseRevisionTag {
     magic0: AtomicU64,
@@ -320,23 +239,19 @@ struct BaseRevisionTag {
     requested_revision: AtomicU64,
 }
 
-/// The loader refused (or could not comply with) the requested base
-/// revision; the kernel booted under unspecified semantics.
+/// The loader did not accept the requested base revision.
 pub struct BaseRevisionNotAccepted;
 
-/// The negotiated protocol base revision, or
-/// [`BaseRevisionNotAccepted`] if the loader did not accept our request.
+/// Negotiated protocol base revision, or [`BaseRevisionNotAccepted`].
 pub fn base_revision() -> Result<u64, BaseRevisionNotAccepted> {
     if BASE_REVISION.requested_revision.load(Ordering::Acquire) != 0 {
         return Err(BaseRevisionNotAccepted);
     }
     let magic1 = BASE_REVISION.magic1.load(Ordering::Acquire);
     if magic1 == BASE_REVISION_TAG_MAGIC[1] {
-        // Untouched => booted at exactly the revision we asked for.
-        Ok(REQUESTED_BASE_REVISION)
+        Ok(REQUESTED_BASE_REVISION) // untouched => booted at requested revision
     } else {
-        // Rewritten => holds the revision actually used.
-        Ok(magic1)
+        Ok(magic1) // rewritten => holds the revision actually used
     }
 }
 
@@ -368,28 +283,18 @@ static MEMMAP_REQUEST: Request<MemmapResponse> = Request::new(MEMMAP_REQUEST_ID)
 #[unsafe(link_section = ".limine_requests.end")]
 static END_MARKER: RequestsEndMarker = RequestsEndMarker(REQUESTS_END_MARKER);
 
-// ---------------------------------------------------------------------------
-// Aggregated boot information
-// ---------------------------------------------------------------------------
-
 /// Validated snapshot of everything the bootloader handed us.
 pub struct BootInfo {
-    /// Negotiated protocol base revision.
     pub base_revision: u64,
-    /// HHDM offset (see [`HhdmResponse::offset`]).
     pub hhdm_offset: u64,
-    /// Firmware memory map.
     pub memmap: &'static MemmapResponse,
-    /// Attached framebuffers; empty if none were provided.
+    /// Empty if none were provided.
     pub framebuffers: &'static [&'static Framebuffer],
 }
 
-/// Collects and validates the boot-time feature responses.
-///
-/// `None` means the environment does not meet the kernel's minimum
-/// requirements (base revision rejected, or a mandatory feature — currently
-/// HHDM and the memory map — went unanswered). The framebuffer is optional:
-/// the protocol legitimately omits its response when no display exists.
+/// Collects and validates the boot-time feature responses; `None` when the
+/// environment misses minimum requirements (base revision rejected, HHDM or
+/// memory map unanswered). The framebuffer is optional.
 pub(crate) fn collect() -> Option<BootInfo> {
     let base_revision = match base_revision() {
         Ok(rev) => rev,
@@ -408,10 +313,6 @@ pub(crate) fn collect() -> Option<BootInfo> {
         framebuffers,
     })
 }
-
-// ---------------------------------------------------------------------------
-// Host-side ABI conformance tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod abi_layout_tests {
@@ -460,7 +361,6 @@ mod abi_layout_tests {
 
     #[test]
     fn video_mode_and_response_layouts() {
-        // 3 x u64 + u16 + 7 x u8 = 33 payload bytes -> padded to 40.
         assert_eq!(size_of::<VideoMode>(), 40);
         assert_eq!(size_of::<FramebufferResponse>(), 24);
         assert_eq!(offset_of!(FramebufferResponse, framebuffer_count), 0x08);
@@ -482,7 +382,6 @@ mod abi_layout_tests {
         for id in ids {
             assert_eq!(&id[..2], &COMMON_MAGIC);
         }
-        // Feature-specific halves must differ pairwise.
         for i in 0..ids.len() {
             for j in (i + 1)..ids.len() {
                 assert_ne!(&ids[i][2..], &ids[j][2..]);

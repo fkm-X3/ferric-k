@@ -34,8 +34,7 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'image build failed' }
     }
 
-    # Mirrors crates/ferric-unsafe-core/src/qemu.rs (see module docs):
-    # device defaults from QEMU hw/misc/debugexit.c, STATUS_BOOT_OK = 0x10.
+    # Mirrors crates/ferric-unsafe-core/src/qemu.rs; keep in sync.
     $DebugExitDeviceArgs = @(
         '-device', 'isa-debug-exit,iobase=0x501,iosize=0x2'
     )
