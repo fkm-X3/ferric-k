@@ -4,8 +4,7 @@
 # NOT here. A global `[unstable] build-std` also applies to *host* builds
 # (e.g. `cargo test`), where cargo would then build a second `core` that
 # collides with the prebuilt one behind std ("duplicate lang item `core`").
-# Kernel-target invocations pass the flags explicitly — see scripts/check.ps1
-# and ARCHITECTURE.md D-12.
+# Kernel-target invocations pass the flags explicitly — see scripts/check.ps1.
 
 # x86_64: link with the higher-half Limine layout (kernels/x86_64.ld) and pin
 # the loader page size so every PT_LOAD gets p_align = 4 KiB regardless of
@@ -13,6 +12,15 @@
 [target.x86_64-ferric]
 rustflags = [
     "-C", "link-arg=-Tkernels/x86_64.ld",
+    "-C", "link-arg=-z",
+    "-C", "link-arg=max-page-size=0x1000",
+]
+
+# aarch64: same higher-half Limine layout (kernels/aarch64.ld); ld.lld
+# defaults this arch to 64 KiB loader pages, so pin 4 KiB like on x86_64.
+[target.aarch64-ferric]
+rustflags = [
+    "-C", "link-arg=-Tkernels/aarch64.ld",
     "-C", "link-arg=-z",
     "-C", "link-arg=max-page-size=0x1000",
 ]

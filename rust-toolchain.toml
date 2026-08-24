@@ -1,4 +1,4 @@
-# Pinned toolchain — see ARCHITECTURE.md.
+# Pinned toolchain.
 # nightly-2026-08-18 == rustc 1.100.0-nightly (8fa1c96cf 2026-08-17).
 # Toolchain bumps are deliberate: verify build-std + naked asm still work.
 [toolchain]

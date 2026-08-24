@@ -123,7 +123,7 @@ Checksum mismatch for limine-binary.zip!
   expected: $LimineSha256
   actual:   $ActualHash
 Refusing to extract. If upstream re-published the asset, update the pin
-deliberately and record it in ARCHITECTURE.md.
+deliberately.
 "@
         }
         Ok 'sha256 checksum matches pinned value'

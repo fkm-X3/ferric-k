@@ -199,7 +199,7 @@ try {
 
     $Expectations = @{
         'x86_64-ferric'  = @{ Machine = 0x3E; Name = 'EM_X86_64'; Limine = $true }
-        'aarch64-ferric' = @{ Machine = 0xB7; Name = 'EM_AARCH64'; Limine = $false }
+        'aarch64-ferric' = @{ Machine = 0xB7; Name = 'EM_AARCH64'; Limine = $true }
     }
 
     foreach ($Target in @('x86_64-ferric', 'aarch64-ferric')) {
