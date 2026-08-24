@@ -320,6 +320,16 @@ mod abi_layout_tests {
     use core::mem::{offset_of, size_of};
 
     #[test]
+    fn collect_without_a_bootloader_reports_nothing() {
+        // Requests start NULL and the base-revision tag stays unaccepted.
+        assert!(super::collect().is_none());
+        assert!(matches!(
+            super::base_revision(),
+            Err(BaseRevisionNotAccepted)
+        ));
+    }
+
+    #[test]
     fn request_header_is_48_bytes_with_documented_offsets() {
         assert_eq!(size_of::<Request<HhdmResponse>>(), 48);
         assert_eq!(offset_of!(Request<HhdmResponse>, id), 0x00);

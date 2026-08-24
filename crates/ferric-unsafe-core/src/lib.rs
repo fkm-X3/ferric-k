@@ -13,18 +13,30 @@ pub mod limine;
 // when linking the test harness.
 #[cfg(not(test))]
 pub mod mem;
+#[cfg(target_arch = "x86_64")]
+pub mod port;
 pub mod qemu;
+#[cfg(target_arch = "x86_64")]
+pub mod serial;
 
 /// Common early-boot path after bootloader handoff; still on the bootloader stack.
 pub fn boot() -> ! {
-    let boot_info = limine::collect();
-
-    // Proof-of-execution pre-console: run.ps1 asserts the isa-debug-exit code.
     #[cfg(all(target_arch = "x86_64", not(test)))]
     {
-        let status = if boot_info.is_some() {
+        use ferric_api::TextSink;
+
+        const BANNER_OK: &str = "Ferric-K x86_64\nBOOT OK\n";
+        const BANNER_INFO_MISSING: &str = "Ferric-K x86_64\nBOOT INFO MISSING\n";
+
+        let Some(mut console) = serial::Serial::new(serial::COM1_BASE) else {
+            qemu::debug_exit(qemu::STATUS_UART_FAULT);
+        };
+
+        let status = if limine::collect().is_some() {
+            console.write_str(BANNER_OK);
             qemu::STATUS_BOOT_OK
         } else {
+            console.write_str(BANNER_INFO_MISSING);
             qemu::STATUS_BOOT_INFO_MISSING
         };
         qemu::debug_exit(status);
@@ -32,7 +44,8 @@ pub fn boot() -> ! {
 
     #[cfg(any(not(target_arch = "x86_64"), test))]
     {
-        let _ = boot_info;
+        // Validated but unused until the aarch64 path gains its own output.
+        let _boot_info = limine::collect();
         halt()
     }
 }

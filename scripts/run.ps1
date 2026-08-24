@@ -40,6 +40,9 @@ try {
     )
     $ExpectedExitCode = (0x10 -shl 1) -bor 1   # = 33
 
+    # Mirrors the banner in ferric_unsafe_core::boot; keep in sync.
+    $BootMarker = 'BOOT OK'
+
     $BaseArgs = @('-M', 'q35', '-m', '2G', '-hda', $ImagePath, '-serial', 'stdio')
 
     if (-not $Smoke) {
@@ -69,20 +72,25 @@ try {
     if (-not $Proc.WaitForExit($SmokeTimeoutSec * 1000)) {
         Start-Process -FilePath taskkill.exe `
             -ArgumentList "/PID $($Proc.Id) /T /F" -Wait -WindowStyle Hidden
-        Fail "no isa-debug-exit signal within ${SmokeTimeoutSec}s (killed QEMU)"
+        Fail "kernel produced no serial banner + exit within ${SmokeTimeoutSec}s (killed QEMU)"
     }
 
     $SerialTail = if ((Test-Path $StdoutLog) -and (Get-Item $StdoutLog).Length -gt 0) {
         (Get-Content $StdoutLog | Select-Object -Last 10) -join "`n"
     } else { '<serial empty>' }
 
+    if (-not (Test-Path $StdoutLog) -or
+        -not (Select-String -Path $StdoutLog -SimpleMatch $BootMarker -Quiet)) {
+        Fail ("serial log lacks '{0}' marker. Serial tail:`n{1}" -f $BootMarker, $SerialTail)
+    }
+
     if ($Proc.ExitCode -ne $ExpectedExitCode) {
         Fail ("QEMU exit code {0}, expected {1}. Serial tail:`n{2}" -f `
                 $Proc.ExitCode, $ExpectedExitCode, $SerialTail)
     }
 
-    Write-Host ("    [ok] kernel booted through Limine into Rust " +
-                "(isa-debug-exit code {0})" -f $ExpectedExitCode) -ForegroundColor Green
+    Write-Host ("    [ok] serial banner '{0}' asserted + clean exit code {1}" -f `
+            $BootMarker, $ExpectedExitCode) -ForegroundColor Green
     Write-Host 'SMOKE PASSED' -ForegroundColor Green
     exit 0
 }

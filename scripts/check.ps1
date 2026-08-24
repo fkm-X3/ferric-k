@@ -238,7 +238,7 @@ try {
     cargo test -p ferric-unsafe-core --lib
     Assert-ExitCode $LASTEXITCODE 'host tests'
 
-    # Kernel proves early init via isa-debug-exit; run.ps1 asserts the code.
+    # Kernel prints its serial banner; run.ps1 asserts marker + exit code.
     Step 'disk image + QEMU smoke boot'
     & (Join-Path $PSScriptRoot 'build-image.ps1')
     if ($LASTEXITCODE -ne 0) { Fail 'image build' }
