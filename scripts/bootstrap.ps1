@@ -1,12 +1,5 @@
 #Requires -Version 7
-<#
-.SYNOPSIS
-    Ferric-K environment bootstrap: verifies the toolchain, verifies MSYS2
-    dependencies, and materializes the pinned Limine release into third_party/.
-.DESCRIPTION
-    Idempotent — safe to run repeatedly. Exits non-zero on any failure.
-    Tools are always resolved from PATH; no /usr/bin layout assumptions.
-#>
+
 [CmdletBinding()]
 param()
 

@@ -1,16 +1,5 @@
 #Requires -Version 7
-<#
-.SYNOPSIS
-    Ferric-K quality gate: must pass before every commit.
-.DESCRIPTION
-    fmt -> host clippy (libs + tests) -> clippy (both custom targets,
-    -D warnings incl. undocumented-unsafe audit) -> build both targets ->
-    ELF sanity (magic, machine, live entry) -> Limine structural gate for
-    x86_64 (higher-half layout, page-aligned PT_LOADs, .limine_requests
-    byte-exact against the Boot Protocol constants) -> host unit tests.
 
-    All offline: parses the produced ELFs directly, no llvm tools required.
-#>
 [CmdletBinding()]
 param()
 
@@ -29,7 +18,7 @@ try {
 
     function Step([string]$Name) {
         $script:StepNumber++
-        Write-Host ("==> [{0}/7] {1}" -f $script:StepNumber, $Name) -ForegroundColor Cyan
+        Write-Host ("==> [{0}/8] {1}" -f $script:StepNumber, $Name) -ForegroundColor Cyan
     }
 
     function Assert-ExitCode([int]$Code, [string]$What) {
@@ -275,9 +264,22 @@ try {
     cargo test -p ferric-unsafe-core --lib
     Assert-ExitCode $LASTEXITCODE 'host tests'
 
+    # ------------------------------------------------------------------
+    # 8. Boot proof: disk image + headless QEMU boot through Limine.
+    #    The kernel signals completed early init via isa-debug-exit;
+    #    run.ps1 asserts the resulting exit code (see qemu.rs).
+    #    Child scripts exit non-zero on failure, which terminates this
+    #    gate with their diagnostics on record.
+    # ------------------------------------------------------------------
+    Step 'disk image + QEMU smoke boot'
+    & (Join-Path $PSScriptRoot 'build-image.ps1')
+    if ($LASTEXITCODE -ne 0) { Fail 'image build' }
+    & (Join-Path $PSScriptRoot 'run.ps1') -Arch x64 -Smoke
+    Assert-ExitCode $LASTEXITCODE 'smoke boot'
+
     Write-Host ''
     Write-Host ('CHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ' +
-                'ELF/Limine gates + host tests all green.') -ForegroundColor Green
+                'ELF/Limine gates + host tests + smoke boot all green.') -ForegroundColor Green
 }
 finally {
     Pop-Location

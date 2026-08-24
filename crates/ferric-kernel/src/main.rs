@@ -23,7 +23,6 @@ use core::panic::PanicInfo;
 static KEEP_UNSAFE_CORE_LINKED: [fn() -> !; 1] = [ferric_unsafe_core::halt];
 
 /// Temporary panic handler.
-
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {

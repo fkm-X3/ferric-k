@@ -29,6 +29,7 @@ pub mod limine;
 // the platform CRT when linking the test harness.
 #[cfg(not(test))]
 pub mod mem;
+pub mod qemu;
 
 /// Common early-boot path, reached from the architecture entry points
 /// immediately after bootloader handoff.
@@ -36,12 +37,31 @@ pub mod mem;
 /// Still running on the bootloader-provided stack at this point (>= 64 KiB,
 /// return address 0 pushed — Limine protocol, "Machine State at Entry").
 pub fn boot() -> ! {
-    let _boot_info = limine::collect();
-    halt()
+    let boot_info = limine::collect();
+
+    // Proof-of-execution while no console exists: report the outcome of early
+    // init to the run harness through QEMU's isa-debug-exit device
+    // (scripts/run.ps1 asserts the resulting exit code).
+    #[cfg(all(target_arch = "x86_64", not(test)))]
+    {
+        let status = if boot_info.is_some() {
+            qemu::STATUS_BOOT_OK
+        } else {
+            qemu::STATUS_BOOT_INFO_MISSING
+        };
+        qemu::debug_exit(status);
+    }
+
+    // Host-test builds and architectures without an isa-debug-exit
+    // equivalent park forever for now.
+    #[cfg(any(not(target_arch = "x86_64"), test))]
+    {
+        let _ = boot_info;
+        halt()
+    }
 }
 
 /// Parks the CPU forever.
-
 pub fn halt() -> ! {
     loop {
         core::hint::spin_loop();

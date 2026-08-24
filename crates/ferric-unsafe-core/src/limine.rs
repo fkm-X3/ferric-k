@@ -373,7 +373,6 @@ static END_MARKER: RequestsEndMarker = RequestsEndMarker(REQUESTS_END_MARKER);
 // ---------------------------------------------------------------------------
 
 /// Validated snapshot of everything the bootloader handed us.
-
 pub struct BootInfo {
     /// Negotiated protocol base revision.
     pub base_revision: u64,
