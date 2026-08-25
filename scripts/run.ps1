@@ -21,10 +21,10 @@ try {
         exit 1
     }
 
-    if ($Arch -ne 'x64') { throw "Arch '$Arch' arrives later." }
-    $Qemu = Get-Command qemu-system-x86_64 -ErrorAction SilentlyContinue
+    $QemuName = if ($Arch -eq 'x64') { 'qemu-system-x86_64' } else { 'qemu-system-aarch64' }
+    $Qemu = Get-Command $QemuName -ErrorAction SilentlyContinue
     if (-not $Qemu) {
-        throw 'qemu-system-x86_64 not found on PATH. Run: pwsh scripts/bootstrap.ps1'
+        throw "$QemuName not found on PATH. Run: pwsh scripts/bootstrap.ps1"
     }
 
     if (-not $ImagePath) { $ImagePath = Join-Path $RepoRoot 'build\ferric.img' }
@@ -34,21 +34,41 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'image build failed' }
     }
 
-    # Mirrors crates/ferric-unsafe-core/src/qemu.rs; keep in sync.
-    $DebugExitDeviceArgs = @(
-        '-device', 'isa-debug-exit,iobase=0x501,iosize=0x2'
-    )
-    $ExpectedExitCode = (0x10 -shl 1) -bor 1   # = 33
-
     # Mirrors the banner in ferric_unsafe_core::boot; keep in sync.
     $BootMarker = 'BOOT OK'
 
-    $BaseArgs = @('-M', 'q35', '-m', '2G', '-hda', $ImagePath, '-serial', 'stdio')
+    if ($Arch -eq 'x64') {
+        # Mirrors crates/ferric-unsafe-core/src/qemu.rs; keep in sync.
+        $ExitChannelArgs = @(
+            '-device', 'isa-debug-exit,iobase=0x501,iosize=0x2'
+        )
+        $ExpectedExitCode = (0x10 -shl 1) -bor 1   # STATUS_BOOT_OK -> 33
+
+        $MachineArgs = @('-M', 'q35', '-m', '2G',
+                         '-hda', $ImagePath, '-serial', 'stdio')
+    }
+    else {
+        $Firmware = Join-Path $RepoRoot 'third_party\firmware\edk2-aarch64-code.fd'
+        if (-not (Test-Path $Firmware)) {
+            throw "aarch64 UEFI firmware missing at $Firmware. Run: pwsh scripts/bootstrap.ps1"
+        }
+
+        # Semihosting provides the deterministic exit on aarch64 (no
+        # isa-debug-exit there); SYS_EXIT passes the status byte through raw.
+        # Mirrors qemu.rs; keep in sync.
+        $ExitChannelArgs = @('-semihosting-config', 'enable=on,target=native')
+        $ExpectedExitCode = 0x10                    # STATUS_BOOT_OK -> 16
+
+        $MachineArgs = @('-M', 'virt', '-cpu', 'cortex-a72', '-m', '2G',
+                         '-bios', $Firmware,
+                         '-drive', "if=virtio,format=raw,file=$ImagePath",
+                         '-serial', 'stdio')
+    }
 
     if (-not $Smoke) {
         Write-Host '==> booting QEMU (interactive; close window or Ctrl-C to stop)' `
             -ForegroundColor Cyan
-        & $Qemu.Source @BaseArgs @DebugExitDeviceArgs
+        & $Qemu.Source @MachineArgs @ExitChannelArgs
         Write-Host ("QEMU exited with code {0}" -f $LASTEXITCODE)
         return
     }
@@ -58,13 +78,13 @@ try {
     if (-not (Test-Path $LogDir)) {
         New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     }
-    $StdoutLog = Join-Path $LogDir 'last-smoke-stdout.log'
-    $StderrLog = Join-Path $LogDir 'last-smoke-stderr.log'
+    $StdoutLog = Join-Path $LogDir "last-smoke-$Arch-stdout.log"
+    $StderrLog = Join-Path $LogDir "last-smoke-$Arch-stderr.log"
 
     # Headless + no-reboot: a guest reset (e.g. triple fault) exits instead of
     # looping forever, and its exit code can never match the assertion.
     $Proc = Start-Process -FilePath $Qemu.Source `
-        -ArgumentList ($BaseArgs + $DebugExitDeviceArgs +
+        -ArgumentList ($MachineArgs + $ExitChannelArgs +
                        @('-display', 'none', '-no-reboot')) `
         -NoNewWindow -PassThru `
         -RedirectStandardOutput $StdoutLog -RedirectStandardError $StderrLog

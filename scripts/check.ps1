@@ -16,7 +16,7 @@ try {
 
     function Step([string]$Name) {
         $script:StepNumber++
-        Write-Host ("==> [{0}/8] {1}" -f $script:StepNumber, $Name) -ForegroundColor Cyan
+        Write-Host ("==> [{0}/9] {1}" -f $script:StepNumber, $Name) -ForegroundColor Cyan
     }
 
     function Assert-ExitCode([int]$Code, [string]$What) {
@@ -238,16 +238,19 @@ try {
     cargo test -p ferric-unsafe-core --lib
     Assert-ExitCode $LASTEXITCODE 'host tests'
 
-    # Kernel prints its serial banner; run.ps1 asserts marker + exit code.
-    Step 'disk image + QEMU smoke boot'
+    # The image carries both kernels; each arch asserts its serial banner.
+    Step 'disk image + QEMU smoke boots'
     & (Join-Path $PSScriptRoot 'build-image.ps1')
     if ($LASTEXITCODE -ne 0) { Fail 'image build' }
     & (Join-Path $PSScriptRoot 'run.ps1') -Arch x64 -Smoke
-    Assert-ExitCode $LASTEXITCODE 'smoke boot'
+    Assert-ExitCode $LASTEXITCODE 'smoke boot (x86_64)'
+    & (Join-Path $PSScriptRoot 'run.ps1') -Arch arm64 -Smoke
+    Assert-ExitCode $LASTEXITCODE 'smoke boot (aarch64)'
 
     Write-Host ''
     Write-Host ('CHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ' +
-                'ELF/Limine gates + host tests + smoke boot all green.') -ForegroundColor Green
+                'ELF/Limine gates + host tests + smoke boots (x86_64, aarch64) all green.') `
+        -ForegroundColor Green
 }
 finally {
     Pop-Location

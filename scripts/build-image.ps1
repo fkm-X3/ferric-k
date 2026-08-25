@@ -2,8 +2,6 @@
 
 [CmdletBinding()]
 param(
-    [ValidateSet('x64')]
-    [string]$Arch = 'x64',
     [string]$ImagePath,
     [ValidateRange(16, 4096)]
     [int]$SizeMb = 64
@@ -57,24 +55,32 @@ try {
         throw "third_party/limine missing. Run: pwsh scripts/bootstrap.ps1"
     }
 
-    if ($Arch -ne 'x64') { throw "Arch '$Arch' arrives later." }
-
-    $KernelElf = Join-Path $RepoRoot 'target\x86_64-ferric\debug\ferric-kernel'
-    if (-not (Test-Path $KernelElf)) {
-        throw ("Kernel ELF not found at $KernelElf.`n" +
-               'Build it first: cargo build --target targets/x86_64-ferric.json ' +
-               '-Zbuild-std=core,compiler_builtins -Zjson-target-spec')
+    # One image carries both kernels; limine.conf's if_arch guards pick the
+    # entry matching the firmware that is running.
+    $KernelElfs = [ordered]@{
+        'kernel-x86_64.elf'  = Join-Path $RepoRoot 'target\x86_64-ferric\debug\ferric-kernel'
+        'kernel-aarch64.elf' = Join-Path $RepoRoot 'target\aarch64-ferric\debug\ferric-kernel'
     }
-    $KernelSize = (Get-Item $KernelElf).Length
+    foreach ($Name in $KernelElfs.Keys) {
+        if (-not (Test-Path $KernelElfs[$Name])) {
+            $Target = if ($Name -like 'kernel-x86_64*') { 'x86_64-ferric' } else { 'aarch64-ferric' }
+            throw ("$Name not found at $($KernelElfs[$Name]).`n" +
+                   "Build it first: cargo build --target targets/$Target.json " +
+                   '-Zbuild-std=core,compiler_builtins -Zjson-target-spec')
+        }
+    }
 
     $ConfPath = Join-Path $RepoRoot 'boot\limine.conf'
     $BiosSys  = Join-Path $RepoRoot 'third_party\limine\limine-bios.sys'
     foreach ($File in @($ConfPath, $BiosSys,
                         (Join-Path $RepoRoot 'third_party\limine\BOOTX64.EFI'),
-                        (Join-Path $RepoRoot 'third_party\limine\BOOTIA32.EFI'))) {
+                        (Join-Path $RepoRoot 'third_party\limine\BOOTIA32.EFI'),
+                        (Join-Path $RepoRoot 'third_party\limine\BOOTAA64.EFI'))) {
         if (-not (Test-Path $File)) { throw "missing input: $File" }
     }
-    Ok "kernel ELF ($KernelSize bytes), config, Limine payloads"
+    Ok ("kernels: {0} bytes x86_64 + {1} bytes aarch64, config, Limine payloads" -f `
+            (Get-Item $KernelElfs['kernel-x86_64.elf']).Length,
+            (Get-Item $KernelElfs['kernel-aarch64.elf']).Length)
 
     # ------------------------------------------------------------------
     # Image + partition table
@@ -120,12 +126,15 @@ try {
     Step 'Stage files'
     Invoke-Checked { mmd -i $ImgAtOff ::EFI ::EFI/BOOT } 'mmd EFI/BOOT'
     Invoke-Checked { mcopy -i $ImgAtOff $ConfPath '::limine.conf' } 'copy limine.conf'
-    Invoke-Checked { mcopy -i $ImgAtOff $KernelElf '::kernel.elf' } 'copy kernel.elf'
+    foreach ($Name in $KernelElfs.Keys) {
+        Invoke-Checked { mcopy -i $ImgAtOff $KernelElfs[$Name] "::$Name" } "copy $Name"
+    }
     Invoke-Checked { mcopy -i $ImgAtOff $BiosSys '::limine-bios.sys' } 'copy limine-bios.sys'
     Invoke-Checked {
         mcopy -i $ImgAtOff `
               (Join-Path $RepoRoot 'third_party\limine\BOOTX64.EFI') `
               (Join-Path $RepoRoot 'third_party\limine\BOOTIA32.EFI') `
+              (Join-Path $RepoRoot 'third_party\limine\BOOTAA64.EFI') `
               '::EFI/BOOT/'
     } 'copy UEFI loaders'
 
@@ -141,8 +150,8 @@ try {
     $Listing = @(mdir -i $ImgAtOff ::) + @(mdir -i $ImgAtOff '::EFI/BOOT')
     if ($LASTEXITCODE -ne 0) { throw 'mdir validation failed' }
     $Flat = ($Listing -join "`n").ToLowerInvariant()
-    foreach ($Needle in @('limine.conf', 'kernel', 'limine-bios.sys',
-                          'bootx64', 'bootia32')) {
+    foreach ($Needle in @('limine.conf', 'kernel-x86_64', 'kernel-aarch64',
+                          'limine-bios.sys', 'bootx64', 'bootia32', 'bootaa64')) {
         if ($Flat -notmatch [regex]::Escape($Needle)) {
             throw "image validation: '$Needle' not found in FAT directory listing"
         }

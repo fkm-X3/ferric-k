@@ -146,6 +146,39 @@ deliberately.
         Ok "limine $LimineVersion materialized into third_party/limine/"
     }
 
+    Step 'UEFI firmware (aarch64)'
+
+    # QEMU ships its edk2 blobs under <prefix>/share/qemu next to its binaries;
+    # resolve them from the qemu-system-aarch64 location rather than assuming
+    # an MSYS2 install layout.
+    function Find-FirmwareSource {
+        $QemuBin = Get-Command qemu-system-aarch64 -ErrorAction SilentlyContinue
+        if (-not $QemuBin) { return $null }
+        $ShareDir = Join-Path (Split-Path -Parent $QemuBin.Source) '..\share\qemu'
+        foreach ($Name in @('edk2-aarch64-code.fd', 'QEMU_EFI-aarch64.fd')) {
+            # Resolve-Path canonicalizes the .. component and verifies existence.
+            $Resolved = Resolve-Path (Join-Path $ShareDir $Name) -ErrorAction SilentlyContinue
+            if ($Resolved) { return $Resolved.Path }
+        }
+        return $null
+    }
+
+    $FirmwareDir  = Join-Path $RepoRoot 'third_party\firmware'
+    $FirmwarePath = Join-Path $FirmwareDir 'edk2-aarch64-code.fd'
+    $FirmwareSrc  = Find-FirmwareSource
+    if (-not $FirmwareSrc) {
+        Fail "no edk2-aarch64 UEFI firmware found next to qemu-system-aarch64 (share/qemu)"
+    }
+    elseif ((Test-Path $FirmwarePath) -and
+            (Get-FileHash $FirmwarePath).Hash -eq (Get-FileHash $FirmwareSrc).Hash) {
+        Ok "third_party/firmware/edk2-aarch64-code.fd matches installed QEMU"
+    }
+    else {
+        New-Item -ItemType Directory -Force -Path $FirmwareDir | Out-Null
+        Copy-Item $FirmwareSrc $FirmwarePath -Force
+        Ok "staged $FirmwareSrc -> third_party/firmware/"
+    }
+
     Write-Host ''
     if ($script:Failed) {
         Write-Host 'BOOTSTRAP FAILED — fix the items marked [FAIL] above.' -ForegroundColor Red

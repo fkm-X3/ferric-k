@@ -23,6 +23,9 @@ pub mod qemu;
 pub mod serial;
 pub mod text;
 pub mod volatile;
+// Page-descriptor logic is host-tested like the drivers it supports.
+#[cfg(any(target_arch = "aarch64", test))]
+pub mod mmu;
 
 /// Common early-boot path after bootloader handoff; still on the bootloader stack.
 pub fn boot() -> ! {
@@ -52,15 +55,20 @@ pub fn boot() -> ! {
         use ferric_api::TextSink;
 
         const BANNER_OK: &str = "Ferric-K aarch64\nBOOT OK\n";
-        const BANNER_INFO_MISSING: &str = "Ferric-K aarch64\nBOOT INFO MISSING\n";
 
-        let mut console = pl011::Pl011Uart::new(pl011::UART0_BASE);
-        if limine::collect().is_some() {
-            console.write_str(BANNER_OK);
-        } else {
-            console.write_str(BANNER_INFO_MISSING);
+        // The bootloader's direct map covers memory-map ranges only; MMIO
+        // needs a mapping of our own before the PL011 is reachable, and
+        // nothing can print until then.
+        let Some(info) = limine::collect() else {
+            qemu::semihosting_exit(qemu::STATUS_BOOT_INFO_MISSING);
+        };
+        if !arch::aarch64::map_uart_window(info.hhdm_offset) {
+            qemu::semihosting_exit(qemu::STATUS_UART_FAULT);
         }
-        halt()
+        let mut console =
+            pl011::Pl011Uart::new(pl011::UART0_BASE.wrapping_add(info.hhdm_offset as usize));
+        console.write_str(BANNER_OK);
+        qemu::semihosting_exit(qemu::STATUS_BOOT_OK)
     }
 
     #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]

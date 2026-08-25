@@ -19,8 +19,10 @@ const REQUESTS_END_MARKER: [u64; 2] = [0xadc0e0531bb10d03, 0x9572709f31764c62];
 /// `LIMINE_BASE_REVISION(N)` tag magic.
 const BASE_REVISION_TAG_MAGIC: [u64; 2] = [0xf9562b2d5c95a6c8, 0x6a7b384944536bdc];
 
-/// Base revision Ferric-K requests.
-pub const REQUESTED_BASE_REVISION: u64 = 4;
+/// Base revision Ferric-K requests. 6 because pinned Limine v12.6.0 refuses
+/// base revisions < 6 on aarch64 ("no longer supported", minimum 6); x86_64
+/// gains only extra loader-side guarantees between 4 and 6.
+pub const REQUESTED_BASE_REVISION: u64 = 6;
 
 /// `struct limine_<feature>_request`: `id[4]`, `revision`, `response` (48 bytes).
 #[repr(C)]
