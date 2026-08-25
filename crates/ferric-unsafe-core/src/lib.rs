@@ -13,11 +13,16 @@ pub mod limine;
 // when linking the test harness.
 #[cfg(not(test))]
 pub mod mem;
+// Included in host test builds so its register semantics run against fake MMIO.
+#[cfg(any(target_arch = "aarch64", test))]
+pub mod pl011;
 #[cfg(target_arch = "x86_64")]
 pub mod port;
 pub mod qemu;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
+pub mod text;
+pub mod volatile;
 
 /// Common early-boot path after bootloader handoff; still on the bootloader stack.
 pub fn boot() -> ! {
@@ -42,9 +47,25 @@ pub fn boot() -> ! {
         qemu::debug_exit(status);
     }
 
-    #[cfg(any(not(target_arch = "x86_64"), test))]
+    #[cfg(all(target_arch = "aarch64", not(test)))]
     {
-        // Validated but unused until the aarch64 path gains its own output.
+        use ferric_api::TextSink;
+
+        const BANNER_OK: &str = "Ferric-K aarch64\nBOOT OK\n";
+        const BANNER_INFO_MISSING: &str = "Ferric-K aarch64\nBOOT INFO MISSING\n";
+
+        let mut console = pl011::Pl011Uart::new(pl011::UART0_BASE);
+        if limine::collect().is_some() {
+            console.write_str(BANNER_OK);
+        } else {
+            console.write_str(BANNER_INFO_MISSING);
+        }
+        halt()
+    }
+
+    #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]
+    {
+        // Validated but unused until output exists on this path.
         let _boot_info = limine::collect();
         halt()
     }

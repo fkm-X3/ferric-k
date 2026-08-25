@@ -2,6 +2,7 @@
 //! per osdev wiki "Serial Ports". Polled operation, fixed 115200 baud 8N1.
 
 use crate::port::Port;
+use crate::text::expand_lf_to_crlf;
 use ferric_api::TextSink;
 
 /// COM1 on PCs (osdev wiki "Serial Ports").
@@ -94,17 +95,7 @@ impl Serial {
 
 impl TextSink for Serial {
     fn write_str(&mut self, s: &str) {
-        transmit_bytes(s, |byte| self.send(byte));
-    }
-}
-
-/// Expands bare `\n` to `\r\n`; every other byte passes through untouched.
-fn transmit_bytes(s: &str, mut emit: impl FnMut(u8)) {
-    for byte in s.bytes() {
-        if byte == b'\n' {
-            emit(b'\r');
-        }
-        emit(byte);
+        expand_lf_to_crlf(s, |byte| self.send(byte));
     }
 }
 
@@ -136,12 +127,5 @@ mod tests {
             }
         }
         assert!(offsets.iter().all(|&off| off < 8));
-    }
-
-    #[test]
-    fn lone_lf_expands_to_crlf() {
-        let mut out = Vec::new();
-        transmit_bytes("a\nb\r\nc", |byte| out.push(byte));
-        assert_eq!(out, b"a\r\nb\r\r\nc");
     }
 }
