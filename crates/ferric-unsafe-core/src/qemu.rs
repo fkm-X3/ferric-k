@@ -23,6 +23,14 @@ pub const STATUS_BOOT_INFO_MISSING: u8 = 0x20;
 /// UART loopback probe failed (port absent or dead); QEMU exits with code 97.
 pub const STATUS_UART_FAULT: u8 = 0x30;
 
+/// No usable RGB framebuffer was handed over; QEMU exits with code
+/// `(0x40 << 1) | 1` on x86_64 and `0x40` raw on aarch64.
+pub const STATUS_FRAMEBUFFER_MISSING: u8 = 0x40;
+
+/// The color-bar self-test failed its readback; QEMU exits with code
+/// `(0x50 << 1) | 1` on x86_64 and `0x50` raw on aarch64.
+pub const STATUS_FRAMEBUFFER_FAULT: u8 = 0x50;
+
 /// Exit code QEMU reports for a status byte: `(status << 1) | 1`. Always
 /// odd, so crash/reset exits can never collide with a kernel-reported status.
 #[must_use]
@@ -95,7 +103,13 @@ mod tests {
 
     #[test]
     fn status_codes_map_to_odd_exit_codes_that_cannot_collide() {
-        let statuses = [STATUS_BOOT_OK, STATUS_BOOT_INFO_MISSING, STATUS_UART_FAULT];
+        let statuses = [
+            STATUS_BOOT_OK,
+            STATUS_BOOT_INFO_MISSING,
+            STATUS_UART_FAULT,
+            STATUS_FRAMEBUFFER_MISSING,
+            STATUS_FRAMEBUFFER_FAULT,
+        ];
         for status in statuses {
             assert_eq!(qemu_exit_code(status) % 2, 1);
         }
@@ -103,6 +117,10 @@ mod tests {
         for i in 0..statuses.len() {
             for j in (i + 1)..statuses.len() {
                 assert_ne!(qemu_exit_code(statuses[i]), qemu_exit_code(statuses[j]));
+                assert_ne!(
+                    semihosting_exit_code(statuses[i]),
+                    semihosting_exit_code(statuses[j])
+                );
             }
         }
     }

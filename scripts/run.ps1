@@ -34,8 +34,9 @@ try {
         if ($LASTEXITCODE -ne 0) { throw 'image build failed' }
     }
 
-    # Mirrors the banner in ferric_unsafe_core::boot; keep in sync.
+    # Mirrors the banners in ferric_unsafe_core::boot; keep in sync.
     $BootMarker = 'BOOT OK'
+    $FramebufferMarker = 'FRAMEBUFFER OK'
 
     if ($Arch -eq 'x64') {
         # Mirrors crates/ferric-unsafe-core/src/qemu.rs; keep in sync.
@@ -59,9 +60,12 @@ try {
         $ExitChannelArgs = @('-semihosting-config', 'enable=on,target=native')
         $ExpectedExitCode = 0x10                    # STATUS_BOOT_OK -> 16
 
+        # -M virt ships no display device by default; ramfb gives the UEFI
+        # firmware a GOP surface so Limine can hand over a linear framebuffer.
         $MachineArgs = @('-M', 'virt', '-cpu', 'cortex-a72', '-m', '2G',
                          '-bios', $Firmware,
                          '-drive', "if=virtio,format=raw,file=$ImagePath",
+                         '-device', 'ramfb',
                          '-serial', 'stdio')
     }
 
@@ -104,13 +108,18 @@ try {
         Fail ("serial log lacks '{0}' marker. Serial tail:`n{1}" -f $BootMarker, $SerialTail)
     }
 
+    if (-not (Select-String -Path $StdoutLog -SimpleMatch $FramebufferMarker -Quiet)) {
+        Fail ("serial log lacks '{0}' marker. Serial tail:`n{1}" -f `
+                $FramebufferMarker, $SerialTail)
+    }
+
     if ($Proc.ExitCode -ne $ExpectedExitCode) {
         Fail ("QEMU exit code {0}, expected {1}. Serial tail:`n{2}" -f `
                 $Proc.ExitCode, $ExpectedExitCode, $SerialTail)
     }
 
-    Write-Host ("    [ok] serial banner '{0}' asserted + clean exit code {1}" -f `
-            $BootMarker, $ExpectedExitCode) -ForegroundColor Green
+    Write-Host ("    [ok] serial banners '{0}' + '{1}' asserted + clean exit code {2}" -f `
+            $BootMarker, $FramebufferMarker, $ExpectedExitCode) -ForegroundColor Green
     Write-Host 'SMOKE PASSED' -ForegroundColor Green
     exit 0
 }

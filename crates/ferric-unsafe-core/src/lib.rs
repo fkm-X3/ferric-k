@@ -8,6 +8,7 @@
 #![cfg_attr(not(test), feature(linkage))]
 
 pub mod arch;
+pub mod framebuffer;
 pub mod limine;
 // Excluded on host: defining memcpy etc. would collide with the platform CRT
 // when linking the test harness.
@@ -21,11 +22,28 @@ pub mod port;
 pub mod qemu;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
+pub mod sync;
 pub mod text;
 pub mod volatile;
 // Page-descriptor logic is host-tested like the drivers it supports.
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod mmu;
+
+/// Serial proof line emitted once the color-bar self-test has passed.
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
+
+/// Keeps the drawn frame visible for a few emulator seconds before the
+/// deterministic exit; replaced by real timers later.
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+const DISPLAY_DWELL_ITERATIONS: u64 = 2_000_000;
+
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+fn dwell_for_display() {
+    for _ in 0..DISPLAY_DWELL_ITERATIONS {
+        core::hint::spin_loop();
+    }
+}
 
 /// Common early-boot path after bootloader handoff; still on the bootloader stack.
 pub fn boot() -> ! {
@@ -40,14 +58,22 @@ pub fn boot() -> ! {
             qemu::debug_exit(qemu::STATUS_UART_FAULT);
         };
 
-        let status = if limine::collect().is_some() {
-            console.write_str(BANNER_OK);
-            qemu::STATUS_BOOT_OK
-        } else {
+        let Some(info) = limine::collect() else {
             console.write_str(BANNER_INFO_MISSING);
-            qemu::STATUS_BOOT_INFO_MISSING
+            qemu::debug_exit(qemu::STATUS_BOOT_INFO_MISSING);
         };
-        qemu::debug_exit(status);
+        console.write_str(BANNER_OK);
+
+        if !framebuffer::init_from_boot_info(&info) {
+            qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
+        }
+        if !framebuffer::run_color_bar_self_test() {
+            qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
+        }
+        console.write_str(FRAMEBUFFER_OK_MARKER);
+
+        dwell_for_display();
+        qemu::debug_exit(qemu::STATUS_BOOT_OK);
     }
 
     #[cfg(all(target_arch = "aarch64", not(test)))]
@@ -68,6 +94,16 @@ pub fn boot() -> ! {
         let mut console =
             pl011::Pl011Uart::new(pl011::UART0_BASE.wrapping_add(info.hhdm_offset as usize));
         console.write_str(BANNER_OK);
+
+        if !framebuffer::init_from_boot_info(&info) {
+            qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
+        }
+        if !framebuffer::run_color_bar_self_test() {
+            qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
+        }
+        console.write_str(FRAMEBUFFER_OK_MARKER);
+
+        dwell_for_display();
         qemu::semihosting_exit(qemu::STATUS_BOOT_OK)
     }
 
