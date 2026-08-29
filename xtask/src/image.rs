@@ -30,17 +30,22 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
     if !limine_dir.join("limine-bios.sys").is_file() {
         return Err("third_party/limine missing. Run: cargo xtask bootstrap".into());
     }
-    // Host-side image installer: Windows uses the third_party limine.exe;
-    // Linux/macOS use a `limine` binary on PATH (distro package or built
-    // from source).
+    // Host-side image installer: Windows uses the archive's prebuilt limine.exe;
+    // elsewhere bootstrap compiles the pinned upstream tool into third_party,
+    // degraded to a distro `limine` on PATH only when no C compiler was present.
     let limine_exe = if cfg!(windows) {
         let p = limine_dir.join("limine.exe");
         p.is_file().then_some(p).ok_or_else(|| {
             "third_party/limine/limine.exe missing. Run: cargo xtask bootstrap".to_string()
         })?
     } else {
-        util::find("limine")
-            .map_err(|_| "no `limine` binary on PATH. Install the distro's limine package (or build from source), then rerun".to_string())?
+        let built = limine_dir.join("limine");
+        if built.is_file() {
+            built
+        } else {
+            util::find("limine")
+                .map_err(|_| "no `limine` binary on PATH. Install the distro's limine package (or build from source), then rerun".to_string())?
+        }
     };
 
     let kernels: &[(&str, &str)] = &[

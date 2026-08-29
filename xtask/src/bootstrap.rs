@@ -1,6 +1,7 @@
 use crate::platform;
 use crate::rustup;
 use crate::steps;
+use crate::util;
 use clap::Args;
 use sha2::{Digest, Sha256};
 use std::io::Read;
@@ -13,8 +14,8 @@ const LIMINE_SHA256: &str = "cbbc0a68da766faf05c14fdde31710563c5e6a89b6f2b012a57
 
 /// Files resolved by name anywhere in the archive (upstream reshuffles safe).
 /// Platform-independent payloads staged into the image; the host-side `limine`
-/// installer binary is resolved separately at image time (limine.exe on
-/// Windows, a `limine` binary on PATH on Linux/macOS).
+/// installer is the prebuilt limine.exe on Windows and, elsewhere, this source
+/// tree compiled into third_party/limine/limine (the archive ships no Unix binary).
 const REQUIRED_FILES: &[&str] = &[
     "limine-bios.sys",
     "limine-bios-cd.bin",
@@ -23,6 +24,8 @@ const REQUIRED_FILES: &[&str] = &[
     "BOOTIA32.EFI",
     "BOOTAA64.EFI",
 ];
+
+const HOST_TOOL_SRCS: &[&str] = &["limine.c", "limine-bios-hdd.h", "Makefile"];
 
 #[derive(Args)]
 pub struct BootstrapArgs {
@@ -75,9 +78,10 @@ fn ensure_limine(repo_root: &Path) -> Result<(), String> {
     let marker_matches = std::fs::read_to_string(&version_marker)
         .map(|s| s.trim() == LIMINE_VERSION)
         .unwrap_or(false);
-    let have_all = marker_matches && REQUIRED_FILES.iter().all(|f| limine_dir.join(f).is_file());
+    let payloads_ok = REQUIRED_FILES.iter().all(|f| limine_dir.join(f).is_file());
+    let tool_ok = cfg!(windows) || limine_dir.join("limine").is_file();
 
-    if have_all {
+    if marker_matches && payloads_ok && tool_ok {
         steps::ok(&format!(
             "limine {LIMINE_VERSION} already present in third_party/limine/"
         ));
@@ -132,6 +136,25 @@ fn ensure_limine(repo_root: &Path) -> Result<(), String> {
         }
         std::fs::copy(&matches[0], limine_dir.join("limine.exe"))
             .map_err(|e| format!("cannot copy limine.exe: {e}"))?;
+    } else {
+        // Non-Windows hosts have no prebuilt installer in the archive; compile
+        // the pinned upstream tool from source so image staging needs no PATH
+        // dependency (a missing C compiler degrades to the PATH fallback).
+        let tool_src = limine_dir.join("tool-src");
+        std::fs::create_dir_all(&tool_src)
+            .map_err(|e| format!("cannot create {tool_src:?}: {e}"))?;
+        for file in HOST_TOOL_SRCS {
+            let matches: Vec<PathBuf> = walk(&extract_dir, file);
+            if matches.len() != 1 {
+                return Err(format!(
+                    "Expected exactly one '{file}' in the archive, found {}.",
+                    matches.len()
+                ));
+            }
+            std::fs::copy(&matches[0], tool_src.join(file))
+                .map_err(|e| format!("cannot copy {file}: {e}"))?;
+        }
+        build_host_tool(&tool_src, &limine_dir.join("limine"))?;
     }
     let _ = std::fs::remove_dir_all(&extract_dir);
 
@@ -163,6 +186,36 @@ fn stage_firmware(repo_root: &Path) -> Result<(), String> {
         "staged {} -> third_party/firmware/",
         src.display()
     ));
+    Ok(())
+}
+
+fn build_host_tool(tool_src: &Path, out: &Path) -> Result<(), String> {
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {parent:?}: {e}"))?;
+    }
+    for cc in ["cc", "gcc", "clang"] {
+        if util::find(cc).is_err() {
+            continue;
+        }
+        steps::note(&format!(
+            "building the pinned `limine` host tool with {cc} ..."
+        ));
+        let status = std::process::Command::new(cc)
+            .current_dir(tool_src)
+            .args(["-g", "-O2", "-pipe", "-std=c99", "limine.c", "-o"])
+            .arg(out)
+            .status()
+            .map_err(|e| format!("failed to run {cc}: {e}"))?;
+        if status.success() && out.is_file() {
+            steps::ok(&format!("built {}", out.display()));
+            return Ok(());
+        }
+        return Err(format!(
+            "failed to compile the pinned limine host tool with {cc}"
+        ));
+    }
+    // No C compiler available: image staging falls back to a PATH `limine`.
+    steps::note("no C compiler (cc/gcc/clang) found; `limine` resolved from PATH at image time");
     Ok(())
 }
 
