@@ -1,0 +1,18 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+description = "Cross-platform build/check/run harness replacing the PowerShell scripts."
+publish = false
+
+# Intentionally NOT a workspace member: the kernel workspace builds kernel
+# crates against freestanding targets, and a host std crate would break those
+# `--workspace --target ...` invocations. Invoked via the `cargo xtask` alias
+# (`.cargo/config.toml`), which routes to `cargo run --manifest-path xtask/...`.
+[workspace]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ureq = { version = "2", features = ["tls"] }
+sha2 = "0.10"
+zip = "0.6"

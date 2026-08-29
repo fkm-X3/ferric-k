@@ -4,7 +4,16 @@
 # NOT here. A global `[unstable] build-std` also applies to *host* builds
 # (e.g. `cargo test`), where cargo would then build a second `core` that
 # collides with the prebuilt one behind std ("duplicate lang item `core`").
-# Kernel-target invocations pass the flags explicitly — see scripts/check.ps1.
+# Kernel-target invocations pass the flags explicitly — see xtask/src/check.rs.
+#
+# The build/check/run harness is a standalone xtask crate (NOT a workspace
+# member, so `--workspace --target ...` kernel builds never try to compile it
+# for a freestanding target). `cargo xtask <cmd>` routes here.
+
+[alias]
+# Single alias keeps cargo's real subcommands (check, run, ...) intact: the
+# harness subcommands are namespaced as `cargo xtask <cmd>`.
+xtask = "run --manifest-path xtask/Cargo.toml --"
 
 # x86_64: link with the higher-half Limine layout (kernels/x86_64.ld) and pin
 # the loader page size so every PT_LOAD gets p_align = 4 KiB regardless of
