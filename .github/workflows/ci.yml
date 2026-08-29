@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-and-test:
+    name: build + test (x86_64, aarch64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-registry-
+
+      - name: Cache build artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            target
+            xtask/target
+            third_party
+          key: ${{ runner.os }}-build-${{ hashFiles('**/Cargo.toml') }}-${{ hashFiles('rust-toolchain.toml', 'xtask/src/bootstrap.rs') }}
+          restore-keys: |
+            ${{ runner.os }}-build-
+
+      - name: Bootstrap (toolchain + qemu + mtools + edk2 firmware + Limine)
+        run: cargo xtask bootstrap
+
+      - name: Quality gate (fmt, clippy, build, ELF/Limine, tests, smoke boots)
+        run: cargo xtask check
