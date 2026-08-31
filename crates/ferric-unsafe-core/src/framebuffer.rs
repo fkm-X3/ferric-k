@@ -4,19 +4,7 @@
 use crate::limine::{self, Framebuffer as LimineFramebuffer};
 use crate::sync::{OnceLock, Spinlock};
 
-/// An 8-bit-per-channel color independent of the surface's pixel layout.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rgb {
-    pub r: u8,
-    pub g: u8,
-    pub b: u8,
-}
-
-impl Rgb {
-    pub const fn new(r: u8, g: u8, b: u8) -> Self {
-        Self { r, g, b }
-    }
-}
+pub use ferric_api::Rgb;
 
 /// Vertical bars painted and verified by the boot-time self-test.
 pub const BAR_COLORS: [Rgb; 7] = [
