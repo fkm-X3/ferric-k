@@ -5,3 +5,13 @@
 # Explicit binary types (never normalize).
 *.png binary
 *.psf binary
+
+# Force GitHub Linguist to track and count these extensions
+*.md linguist-detectable=true
+*.json linguist-detectable=true
+*.toml linguist-detectable=true
+
+# Ensure they aren't hidden under documentation or vendor rules
+*.md linguist-documentation=false
+*.json linguist-documentation=false
+*.toml linguist-documentation=false
