@@ -27,4 +27,5 @@ name = "ferric-unsafe-core"
 version = "0.1.0"
 dependencies = [
  "ferric-api",
+ "ferric-safe-core",
 ]

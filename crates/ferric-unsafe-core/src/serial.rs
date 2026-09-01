@@ -2,6 +2,7 @@
 //! per osdev wiki "Serial Ports". Polled operation, fixed 115200 baud 8N1.
 
 use crate::port::Port;
+use crate::sync::{OnceLock, Spinlock};
 use crate::text::expand_lf_to_crlf;
 use ferric_api::TextSink;
 
@@ -97,6 +98,22 @@ impl TextSink for Serial {
     fn write_str(&mut self, s: &str) {
         expand_lf_to_crlf(s, |byte| self.send(byte));
     }
+}
+
+static SERIAL: OnceLock<Spinlock<Serial>> = OnceLock::new();
+
+/// Probes `base` and captures the UART into a global; `false` on failure.
+pub fn init_global(base: u16) -> bool {
+    let Some(serial) = Serial::new(base) else {
+        return false;
+    };
+    SERIAL.set(Spinlock::new(serial)).is_ok()
+}
+
+/// Runs `f` with exclusive access to the global serial; `None` before init.
+pub fn with_serial<R>(f: impl FnOnce(&mut Serial) -> R) -> Option<R> {
+    let mut guard = SERIAL.get()?.lock();
+    Some(f(&mut guard))
 }
 
 #[cfg(test)]

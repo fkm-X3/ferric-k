@@ -1,6 +1,6 @@
-//! Thin kernel bin: wires `ferric-unsafe-core` init into the safe kernel
-//! entry. All ABI symbols and hardware access live in unsafe-core, keeping
-//! this crate 100% safe under `#![forbid(unsafe_code)]`.
+//! Thin kernel bin: links `ferric-unsafe-core` so the final image retains the
+//! entry point and boot path. All ABI symbols and hardware access live in
+//! unsafe-core, keeping this crate 100% safe under `#![forbid(unsafe_code)]`.
 #![no_std]
 #![no_main]
 #![forbid(unsafe_code)]
@@ -8,8 +8,9 @@
 #[cfg(not(test))]
 use core::panic::PanicInfo;
 
-// Nothing references unsafe-core yet, so LLD would drop its object and lose
-// `_start`; taking a function address in a #[used] static forces the link.
+// The bin's only job is to force the linker to keep the unsafe-core object
+// (whose `_start` is the entry); cargo would otherwise drop a library it
+// never sees referenced from here.
 #[used]
 static KEEP_UNSAFE_CORE_LINKED: [fn() -> !; 1] = [ferric_unsafe_core::halt];
 

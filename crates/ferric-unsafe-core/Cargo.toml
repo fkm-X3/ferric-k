@@ -7,6 +7,7 @@ description = "The only crate permitted to contain unsafe code: entry, drivers, 
 
 [dependencies]
 ferric-api.workspace = true
+ferric-safe-core.workspace = true
 
 [lints]
 workspace = true

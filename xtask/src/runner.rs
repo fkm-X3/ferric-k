@@ -9,6 +9,7 @@ use std::time::Duration;
 
 const BOOT_MARKER: &str = "BOOT OK";
 const FRAMEBUFFER_MARKER: &str = "FRAMEBUFFER OK";
+const CONSOLE_MARKER: &str = "Hello from Ferric-K!";
 
 #[derive(Args)]
 pub struct RunArgs {
@@ -154,6 +155,12 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
             tail(&stdout_log)
         ));
     }
+    if !serial.contains(CONSOLE_MARKER) {
+        return Err(format!(
+            "serial log lacks '{CONSOLE_MARKER}' marker. Serial tail:\n{}",
+            tail(&stdout_log)
+        ));
+    }
     let code = status.code().unwrap_or(-1);
     if code != expected_exit_code {
         return Err(format!(
@@ -162,7 +169,7 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
         ));
     }
     steps::ok(&format!(
-        "serial banners '{BOOT_MARKER}' + '{FRAMEBUFFER_MARKER}' asserted + clean exit code {code}"
+        "serial banners '{BOOT_MARKER}' + '{FRAMEBUFFER_MARKER}' + '{CONSOLE_MARKER}' asserted + clean exit code {code}"
     ));
     println!("SMOKE PASSED");
     Ok(())

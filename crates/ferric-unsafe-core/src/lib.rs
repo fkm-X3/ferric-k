@@ -8,6 +8,8 @@
 #![cfg_attr(not(test), feature(linkage))]
 
 pub mod arch;
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub mod console;
 pub mod framebuffer;
 pub mod limine;
 // Excluded on host: defining memcpy etc. would collide with the platform CRT
@@ -31,38 +33,39 @@ pub mod mmu;
 
 /// Serial proof line emitted once the color-bar self-test has passed.
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
-const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
+pub const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
 
 /// Keeps the drawn frame visible for a few emulator seconds before the
 /// deterministic exit; replaced by real timers later.
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
-const DISPLAY_DWELL_ITERATIONS: u64 = 2_000_000;
+pub const DISPLAY_DWELL_ITERATIONS: u64 = 2_000_000;
 
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
-fn dwell_for_display() {
+pub fn dwell_for_display() {
     for _ in 0..DISPLAY_DWELL_ITERATIONS {
         core::hint::spin_loop();
     }
 }
 
-/// Common early-boot path after bootloader handoff; still on the bootloader stack.
+/// Common early-boot path after bootloader handoff; still on the bootloader
+/// stack.  Sets up the serial and framebuffer globals, runs the colour-bar
+/// self-test, then hands off to [`console::kmain`].
 pub fn boot() -> ! {
     #[cfg(all(target_arch = "x86_64", not(test)))]
     {
         use ferric_api::TextSink;
 
-        const BANNER_OK: &str = "Ferric-K x86_64\nBOOT OK\n";
         const BANNER_INFO_MISSING: &str = "Ferric-K x86_64\nBOOT INFO MISSING\n";
 
-        let Some(mut console) = serial::Serial::new(serial::COM1_BASE) else {
+        if !serial::init_global(serial::COM1_BASE) {
             qemu::debug_exit(qemu::STATUS_UART_FAULT);
-        };
+        }
 
         let Some(info) = limine::collect() else {
-            console.write_str(BANNER_INFO_MISSING);
+            serial::with_serial(|s| s.write_str(BANNER_INFO_MISSING));
             qemu::debug_exit(qemu::STATUS_BOOT_INFO_MISSING);
         };
-        console.write_str(BANNER_OK);
+        serial::with_serial(|s| s.write_str("Ferric-K x86_64\nBOOT OK\n"));
 
         if !framebuffer::init_from_boot_info(&info) {
             qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
@@ -70,30 +73,25 @@ pub fn boot() -> ! {
         if !framebuffer::run_color_bar_self_test() {
             qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
         }
-        console.write_str(FRAMEBUFFER_OK_MARKER);
+        serial::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
 
-        dwell_for_display();
-        qemu::debug_exit(qemu::STATUS_BOOT_OK);
+        console::kmain()
     }
 
     #[cfg(all(target_arch = "aarch64", not(test)))]
     {
         use ferric_api::TextSink;
 
-        const BANNER_OK: &str = "Ferric-K aarch64\nBOOT OK\n";
-
-        // The bootloader's direct map covers memory-map ranges only; MMIO
-        // needs a mapping of our own before the PL011 is reachable, and
-        // nothing can print until then.
         let Some(info) = limine::collect() else {
             qemu::semihosting_exit(qemu::STATUS_BOOT_INFO_MISSING);
         };
         if !arch::aarch64::map_uart_window(info.hhdm_offset) {
             qemu::semihosting_exit(qemu::STATUS_UART_FAULT);
         }
-        let mut console =
-            pl011::Pl011Uart::new(pl011::UART0_BASE.wrapping_add(info.hhdm_offset as usize));
-        console.write_str(BANNER_OK);
+        if !pl011::init_global(pl011::UART0_BASE.wrapping_add(info.hhdm_offset as usize)) {
+            qemu::semihosting_exit(qemu::STATUS_UART_FAULT);
+        }
+        pl011::with_serial(|s| s.write_str("Ferric-K aarch64\nBOOT OK\n"));
 
         if !framebuffer::init_from_boot_info(&info) {
             qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
@@ -101,10 +99,9 @@ pub fn boot() -> ! {
         if !framebuffer::run_color_bar_self_test() {
             qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
         }
-        console.write_str(FRAMEBUFFER_OK_MARKER);
+        pl011::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
 
-        dwell_for_display();
-        qemu::semihosting_exit(qemu::STATUS_BOOT_OK)
+        console::kmain()
     }
 
     #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]

@@ -1,6 +1,7 @@
 //! PL011 UART (ARM PrimeCell, ARM DDI 0183G) for the QEMU virt platform's
 //! first serial port; polled operation programmed as 115200-8N1.
 
+use crate::sync::{OnceLock, Spinlock};
 use crate::text::expand_lf_to_crlf;
 use crate::volatile::Volatile;
 use ferric_api::TextSink;
@@ -53,6 +54,10 @@ pub struct Pl011Uart {
     icr: Volatile<u32>,
 }
 
+// SAFETY: the raw-pointer fields are accessed only through the global spin
+// lock, and the MMIO window stays mapped for the kernel lifetime.
+unsafe impl Send for Pl011Uart {}
+
 impl Pl011Uart {
     const fn at(base: usize) -> Self {
         Self {
@@ -98,6 +103,20 @@ impl TextSink for Pl011Uart {
     fn write_str(&mut self, s: &str) {
         expand_lf_to_crlf(s, |byte| self.send(byte));
     }
+}
+
+static PL011: OnceLock<Spinlock<Pl011Uart>> = OnceLock::new();
+
+/// Brings up the PL011 at `base` and captures it into a global.
+pub fn init_global(base: usize) -> bool {
+    let uart = Pl011Uart::new(base);
+    PL011.set(Spinlock::new(uart)).is_ok()
+}
+
+/// Runs `f` with exclusive access to the global PL011; `None` before init.
+pub fn with_serial<R>(f: impl FnOnce(&mut Pl011Uart) -> R) -> Option<R> {
+    let mut guard = PL011.get()?.lock();
+    Some(f(&mut guard))
 }
 
 #[cfg(test)]

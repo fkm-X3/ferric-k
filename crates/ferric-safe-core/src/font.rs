@@ -188,22 +188,31 @@ impl<'a> Font<'a> {
     }
 
     fn unicode_lookup_v1(&self, c: char) -> Option<u32> {
-        let mut pos = self.unicode_offset;
+        // Each glyph record is a run of direct 2-byte LE codepoints, optional
+        // 0xFFFE-starting combining sequences, then the 0xFFFF terminator.
+        // A single-char lookup never matches inside a sequence.
+        let bytes = self.data.get(self.unicode_offset..)?;
         let target = u32::from(c);
-        for glyph in 0..self.glyph_count {
-            let count = *self.data.get(pos)?;
-            if count == 0xFF {
-                break;
-            }
-            let seq = pos + 1;
-            for i in 0..usize::from(count) {
-                let off = seq + i * 2;
-                let cp = u32::from(u16le(self.data.get(off..off + 2)?));
-                if cp == target {
-                    return Some(glyph);
+        let mut pos = 0;
+        let mut glyph = 0u32;
+        while glyph < self.glyph_count && pos + 2 <= bytes.len() {
+            let w = u16le(&bytes[pos..pos + 2]);
+            pos += 2;
+            match w {
+                0xFFFF => glyph += 1,
+                0xFFFE => {
+                    while pos + 2 <= bytes.len() {
+                        let w2 = u16le(&bytes[pos..pos + 2]);
+                        pos += 2;
+                        if w2 == 0xFFFF || w2 == 0xFFFE {
+                            pos -= 2;
+                            break;
+                        }
+                    }
                 }
+                _ if u32::from(w) == target => return Some(glyph),
+                _ => {}
             }
-            pos += 1 + usize::from(count) * 2;
         }
         None
     }
@@ -271,12 +280,12 @@ mod tests {
             data.extend(core::iter::repeat_n(i as u8, glyph_bytes));
         }
         if unicode {
-            // One u16 codepoint per glyph, then the 0xFF terminator.
+            // Direct codepoint (its own index) then the 0xFFFF terminator,
+            // matching the PSF1 unicode-table grammar.
             for g in 0..glyph_count as u16 {
-                data.push(1);
                 data.extend_from_slice(&g.to_le_bytes());
+                data.extend_from_slice(&0xFFFFu16.to_le_bytes());
             }
-            data.push(0xFF);
         }
         data
     }
@@ -397,6 +406,17 @@ mod tests {
         assert_eq!(a[15], 0x00);
         // The unicode table must resolve 'A' back to glyph 65.
         assert_eq!(font.glyph_index_for('A'), Some(65));
+        // Regression: lowercase/physical glyphs must resolve to their own
+        // glyph (identical codepoint), not the glyph-0 replacement.
+        for ch in ['e', 'l', 'o', 'f', 'm', 'i', 'c', 'r', 'H', 'K', '-', '!'] {
+            assert_eq!(
+                font.glyph_index_for(ch),
+                Some(ch as u32),
+                "{ch:?} must resolve to its own glyph"
+            );
+        }
+        assert_eq!(font.glyph_index_for('\u{3C0}'), Some(1)); // 'π' on glyph 1
+        assert_eq!(font.glyph_index_for('\u{FFFD}'), Some(0)); // replacement char
         // Pixels inside and outside the 'A' vertical stroke.
         assert!(font.glyph_pixel(65, 6, 6).unwrap());
         assert!(!font.glyph_pixel(65, 0, 0).unwrap());
