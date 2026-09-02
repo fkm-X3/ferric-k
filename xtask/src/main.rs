@@ -4,6 +4,7 @@ mod bootstrap;
 mod check;
 mod elf;
 mod image;
+mod panic_demo;
 mod platform;
 mod runner;
 mod rustup;
@@ -13,6 +14,7 @@ mod util;
 use bootstrap::BootstrapArgs;
 use check::CheckArgs;
 use image::ImageArgs;
+use panic_demo::PanicDemoArgs;
 use runner::RunArgs;
 
 #[derive(Parser)]
@@ -34,6 +36,8 @@ enum Command {
     BuildImage(ImageArgs),
     /// Boot the image under QEMU (interactive, or --smoke assertions).
     Run(RunArgs),
+    /// Build panic-enabled kernels, boot both arches, assert the crash panel.
+    PanicDemo(PanicDemoArgs),
     /// Full quality gate: fmt, clippy, build, ELF/Limine checks, tests, smoke boots.
     Check(CheckArgs),
 }
@@ -45,6 +49,7 @@ fn main() {
         Command::Bootstrap(args) => bootstrap::run(&repo_root, args),
         Command::BuildImage(args) => image::run(&repo_root, args),
         Command::Run(args) => runner::run(&repo_root, args),
+        Command::PanicDemo(args) => panic_demo::run(&repo_root, args),
         Command::Check(args) => check::run(&repo_root, args),
     };
     if let Err(e) = result {

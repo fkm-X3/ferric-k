@@ -12,6 +12,12 @@ pub mod arch;
 pub mod console;
 pub mod framebuffer;
 pub mod limine;
+#[cfg(all(
+    target_os = "none",
+    not(test),
+    any(target_arch = "x86_64", target_arch = "aarch64")
+))]
+pub mod panic;
 // Excluded on host: defining memcpy etc. would collide with the platform CRT
 // when linking the test harness.
 #[cfg(not(test))]
@@ -75,6 +81,11 @@ pub fn boot() -> ! {
         }
         serial::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
 
+        #[cfg(feature = "panic-on-boot")]
+        {
+            panic!("deliberate boot panic (panic-on-boot)")
+        }
+        #[cfg(not(feature = "panic-on-boot"))]
         console::kmain()
     }
 
@@ -101,6 +112,11 @@ pub fn boot() -> ! {
         }
         pl011::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
 
+        #[cfg(feature = "panic-on-boot")]
+        {
+            panic!("deliberate boot panic (panic-on-boot)")
+        }
+        #[cfg(not(feature = "panic-on-boot"))]
         console::kmain()
     }
 
@@ -112,8 +128,24 @@ pub fn boot() -> ! {
     }
 }
 
-/// Parks the CPU forever.
+/// Parks the CPU forever: `hlt` on x86_64, `wfi` on aarch64.
 pub fn halt() -> ! {
+    #[cfg(target_arch = "x86_64")]
+    loop {
+        // SAFETY: `hlt` suspends the CPU until an interrupt; whichever state
+        // interrupts are in, the loop re-issues it.
+        unsafe {
+            core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
+        }
+    }
+    #[cfg(target_arch = "aarch64")]
+    loop {
+        // SAFETY: `wfi` suspends the CPU until an interrupt wakes it.
+        unsafe {
+            core::arch::asm!("wfi", options(nomem, nostack, preserves_flags));
+        }
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     loop {
         core::hint::spin_loop();
     }

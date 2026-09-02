@@ -14,5 +14,10 @@ ferric-api.workspace = true
 ferric-unsafe-core.workspace = true
 ferric-safe-core.workspace = true
 
+[features]
+# Forwarded so `cargo build --features panic-on-boot` triggers the deliberate
+# boot-time panic in ferric-unsafe-core.
+panic-on-boot = ["ferric-unsafe-core/panic-on-boot"]
+
 [lints]
 workspace = true

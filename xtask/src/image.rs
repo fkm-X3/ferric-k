@@ -22,6 +22,28 @@ pub struct ImageArgs {
 }
 
 pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
+    let kernels: &[(&str, &str)] = &[
+        (
+            "kernel-x86_64.elf",
+            "target/x86_64-ferric/debug/ferric-kernel",
+        ),
+        (
+            "kernel-aarch64.elf",
+            "target/aarch64-ferric/debug/ferric-kernel",
+        ),
+    ];
+    assemble(repo_root, &repo_root.join(&args.image_path), args.size_mb, kernels)
+}
+
+/// Assembles a bootable image from the given `(fat_name, relative_elf_path)`
+/// kernel pairs. Shared by the default image and the panic-demo image, which
+/// stages kernels built with `--features panic-on-boot` from a scratch dir.
+pub fn assemble(
+    repo_root: &Path,
+    image_path: &Path,
+    size_mb: u32,
+    kernels: &[(&str, &str)],
+) -> Result<(), String> {
     for tool in platform::MTOOLS {
         util::find(tool).map_err(|e| format!("{e} (run: cargo xtask bootstrap)"))?;
     }
@@ -48,16 +70,6 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
         }
     };
 
-    let kernels: &[(&str, &str)] = &[
-        (
-            "kernel-x86_64.elf",
-            "target/x86_64-ferric/debug/ferric-kernel",
-        ),
-        (
-            "kernel-aarch64.elf",
-            "target/aarch64-ferric/debug/ferric-kernel",
-        ),
-    ];
     for (name, rel) in kernels {
         let p = repo_root.join(rel);
         let target = target_for(name);
@@ -86,12 +98,11 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
     }
 
     steps::step("Create image");
-    let image_path = repo_root.join(&args.image_path);
     if let Some(parent) = image_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("cannot create {parent:?}: {e}"))?;
     }
 
-    let total_sectors = (args.size_mb as u64) * 1024 * 1024 / SECTOR_SIZE;
+    let total_sectors = (size_mb as u64) * 1024 * 1024 / SECTOR_SIZE;
     let part_sectors = total_sectors - FIRST_PART_START_SECTOR as u64;
 
     {
@@ -99,7 +110,7 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
         // (mformat/mcopy/limine.exe) touch the image; an open handle can lock
         // the file on Windows and break the later boot-sector read.
         let mut img =
-            std::fs::File::create(&image_path).map_err(|e| format!("cannot create image: {e}"))?;
+            std::fs::File::create(image_path).map_err(|e| format!("cannot create image: {e}"))?;
         img.set_len(total_sectors * SECTOR_SIZE)
             .map_err(|e| format!("cannot size image: {e}"))?;
 
@@ -127,7 +138,9 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
     }
     steps::ok(&format!(
         "{}: {} MiB, partition 1 type 0x{FAT_TYPE_WITH_LBA:02X} @ LBA {}",
-        args.image_path, args.size_mb, FIRST_PART_START_SECTOR
+        image_path.display(),
+        size_mb,
+        FIRST_PART_START_SECTOR
     ));
 
     let offset = FIRST_PART_START_SECTOR as u64 * SECTOR_SIZE;
@@ -201,7 +214,7 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
     steps::step("Install Limine BIOS stages");
     let status = std::process::Command::new(&limine_exe)
         .arg("bios-install")
-        .arg(&image_path)
+        .arg(image_path)
         .status()
         .map_err(|e| format!("failed to run limine bios-install: {e}"))?;
     if !status.success() {
@@ -234,7 +247,7 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
     {
         use std::io::Read;
         let mut f =
-            std::fs::File::open(&image_path).map_err(|e| format!("cannot open image: {e}"))?;
+            std::fs::File::open(image_path).map_err(|e| format!("cannot open image: {e}"))?;
         f.read_exact(&mut boot_sector)
             .map_err(|e| format!("cannot read boot sector: {e}"))?;
     }

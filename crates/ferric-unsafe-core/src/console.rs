@@ -15,6 +15,10 @@ const MAX_COLS: u32 = 256;
 const MAX_ROWS: u32 = 128;
 const CELL_COUNT: usize = (MAX_COLS * MAX_ROWS) as usize;
 
+/// Crash-screen colors: white text on a dark red field.
+const PANIC_FG: Rgb = Rgb::new(0xFF, 0xFF, 0xFF);
+const PANIC_BG: Rgb = Rgb::new(0x80, 0x00, 0x00);
+
 static CONSOLE: Spinlock<Console> = Spinlock::new(Console::new());
 
 /// An adapter backing the `print!`/`println!` macros.
@@ -95,6 +99,30 @@ impl Console {
         self.cursor_col = grid.cursor_col();
     }
 
+    /// Rebuilds the cell grid from scratch in crash colors: clears to `bg`,
+    /// prints `lines` in `fg`, and records the cursor. No-op before geometry
+    /// exists.
+    fn panic_grid(&mut self, lines: &[&str], fg: Rgb, bg: Rgb) {
+        if self.cols == 0 || self.rows == 0 {
+            return;
+        }
+        self.fg = fg;
+        self.bg = bg;
+        self.cursor_row = 0;
+        self.cursor_col = 0;
+        let mut grid = TextGrid::new(&mut self.cells[..], self.cols, self.rows)
+            .expect("console geometry must fit the cell buffer");
+        grid.clear(fg, bg);
+        for line in lines {
+            for c in line.chars() {
+                grid.put(c, fg, bg);
+            }
+            grid.put('\n', fg, bg);
+        }
+        self.cursor_row = grid.cursor_row();
+        self.cursor_col = grid.cursor_col();
+    }
+
     fn render(&self, fb: &mut crate::framebuffer::FrameBuffer) {
         let font = Font::parse(FONT_DATA).expect("font parse failed");
         let (cw, ch) = (font.width(), font.height());
@@ -120,6 +148,30 @@ fn mirror_to_serial(s: &str) {
     crate::serial::with_serial(|serial| ferric_api::TextSink::write_str(serial, s));
     #[cfg(target_arch = "aarch64")]
     crate::pl011::with_serial(|serial| ferric_api::TextSink::write_str(serial, s));
+}
+
+/// Crash screen: fills the surface panic-red, prints `lines` in white through
+/// the text grid, mirrors them to serial, then parks the CPU (called by the
+/// panic handler; never returns).
+pub fn render_panic(lines: &[&str]) -> ! {
+    let (fg, bg) = (PANIC_FG, PANIC_BG);
+    let mut console = CONSOLE.lock();
+    if (console.cols == 0 || console.rows == 0)
+        && let Some((w, h)) = crate::framebuffer::with_framebuffer(|fb| (fb.width(), fb.height()))
+    {
+        console.set_geometry(w, h);
+    }
+    console.panic_grid(lines, fg, bg);
+    crate::framebuffer::with_framebuffer(|fb| {
+        let _ = fb.fill_rect(0, 0, fb.width(), fb.height(), bg);
+        console.render(fb);
+    });
+    drop(console);
+    for line in lines {
+        mirror_to_serial(line);
+        mirror_to_serial("\n");
+    }
+    crate::halt()
 }
 
 /// Safe kernel entry called from `boot()` after init and the colour-bar

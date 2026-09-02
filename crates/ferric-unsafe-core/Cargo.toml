@@ -9,5 +9,9 @@ description = "The only crate permitted to contain unsafe code: entry, drivers, 
 ferric-api.workspace = true
 ferric-safe-core.workspace = true
 
+[features]
+# Boot-time deliberate panic to exercise the panic-handler path in QEMU.
+panic-on-boot = []
+
 [lints]
 workspace = true
