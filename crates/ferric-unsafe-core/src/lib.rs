@@ -12,6 +12,7 @@ pub mod arch;
 pub mod console;
 pub mod framebuffer;
 pub mod limine;
+pub mod log;
 #[cfg(all(
     target_os = "none",
     not(test),

@@ -96,10 +96,14 @@ pub fn run(repo_root: &Path, args: CheckArgs) -> Result<(), String> {
         elf::limine_elf_gate(&elf_path, &elf)?;
     }
 
-    steps::step("test (host: ferric-unsafe-core)");
+    steps::step("test (host: ferric-safe-core + ferric-unsafe-core)");
+    assert_ok(
+        util::run(CARGO, &["test", "-p", "ferric-safe-core", "--lib"]),
+        "host tests (ferric-safe-core)",
+    )?;
     assert_ok(
         util::run(CARGO, &["test", "-p", "ferric-unsafe-core", "--lib"]),
-        "host tests",
+        "host tests (ferric-unsafe-core)",
     )?;
 
     if args.no_smoke {
@@ -134,7 +138,7 @@ pub fn run(repo_root: &Path, args: CheckArgs) -> Result<(), String> {
     }
 
     println!(
-        "\nCHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ELF/Limine gates + host tests + smoke boots (x86_64, aarch64) all green."
+        "\nCHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ELF/Limine gates + host tests(safe-core,unsafe-core) + smoke boots(x86_64,aarch64) all green."
     );
     Ok(())
 }

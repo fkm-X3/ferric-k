@@ -6,6 +6,7 @@
 
 pub mod font;
 pub mod grid;
+pub mod log;
 
 pub use ferric_api::Rgb;
 pub use font::Font;
