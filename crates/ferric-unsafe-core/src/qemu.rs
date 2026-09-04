@@ -31,6 +31,11 @@ pub const STATUS_FRAMEBUFFER_MISSING: u8 = 0x40;
 /// `(0x50 << 1) | 1` on x86_64 and `0x50` raw on aarch64.
 pub const STATUS_FRAMEBUFFER_FAULT: u8 = 0x50;
 
+/// Deliberate exception demo succeeded (exception handler printed a
+/// diagnostic dump to serial); QEMU exits with code
+/// `(0x60 << 1) | 1` on x86_64 and `0x60` raw on aarch64.
+pub const STATUS_EXCEPTION_DEMO: u8 = 0x60;
+
 /// Exit code QEMU reports for a status byte: `(status << 1) | 1`. Always
 /// odd, so crash/reset exits can never collide with a kernel-reported status.
 #[must_use]

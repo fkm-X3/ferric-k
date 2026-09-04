@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 mod bootstrap;
 mod check;
 mod elf;
+mod exception_demo;
 mod image;
 mod panic_demo;
 mod platform;
@@ -13,6 +14,7 @@ mod util;
 
 use bootstrap::BootstrapArgs;
 use check::CheckArgs;
+use exception_demo::ExceptionDemoArgs;
 use image::ImageArgs;
 use panic_demo::PanicDemoArgs;
 use runner::RunArgs;
@@ -38,6 +40,8 @@ enum Command {
     Run(RunArgs),
     /// Build panic-enabled kernels, boot both arches, assert the crash panel.
     PanicDemo(PanicDemoArgs),
+    /// Build exception-enabled kernels, boot both arches, assert the diagnostic dump.
+    ExceptionDemo(ExceptionDemoArgs),
     /// Full quality gate: fmt, clippy, build, ELF/Limine checks, tests, smoke boots.
     Check(CheckArgs),
 }
@@ -50,6 +54,7 @@ fn main() {
         Command::BuildImage(args) => image::run(&repo_root, args),
         Command::Run(args) => runner::run(&repo_root, args),
         Command::PanicDemo(args) => panic_demo::run(&repo_root, args),
+        Command::ExceptionDemo(args) => exception_demo::run(&repo_root, args),
         Command::Check(args) => check::run(&repo_root, args),
     };
     if let Err(e) = result {

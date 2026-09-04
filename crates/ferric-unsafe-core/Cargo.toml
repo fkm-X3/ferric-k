@@ -12,6 +12,8 @@ ferric-safe-core.workspace = true
 [features]
 # Boot-time deliberate panic to exercise the panic-handler path in QEMU.
 panic-on-boot = []
+# Boot-time deliberate divide-by-zero to exercise the exception-handler path.
+exception-on-boot = []
 
 [lints]
 workspace = true

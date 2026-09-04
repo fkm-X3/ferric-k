@@ -18,6 +18,9 @@ ferric-safe-core.workspace = true
 # Forwarded so `cargo build --features panic-on-boot` triggers the deliberate
 # boot-time panic in ferric-unsafe-core.
 panic-on-boot = ["ferric-unsafe-core/panic-on-boot"]
+# Forwarded so `cargo build --features exception-on-boot` triggers a deliberate
+# divide-by-zero at boot to exercise the exception handling path.
+exception-on-boot = ["ferric-unsafe-core/exception-on-boot"]
 
 [lints]
 workspace = true

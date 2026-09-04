@@ -24,6 +24,12 @@ pub mod panic;
 #[cfg(not(test))]
 pub mod mem;
 // Included in host test builds so its register semantics run against fake MMIO.
+#[cfg(all(target_arch = "x86_64", not(test)))]
+pub mod gdt;
+#[cfg(all(target_arch = "x86_64", not(test)))]
+pub mod idt;
+#[cfg(all(target_arch = "x86_64", not(test)))]
+pub mod interrupt;
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod pl011;
 #[cfg(target_arch = "x86_64")]
@@ -60,34 +66,58 @@ pub fn dwell_for_display() {
 pub fn boot() -> ! {
     #[cfg(all(target_arch = "x86_64", not(test)))]
     {
-        use ferric_api::TextSink;
-
-        const BANNER_INFO_MISSING: &str = "Ferric-K x86_64\nBOOT INFO MISSING\n";
-
         if !serial::init_global(serial::COM1_BASE) {
             qemu::debug_exit(qemu::STATUS_UART_FAULT);
         }
 
-        let Some(info) = limine::collect() else {
-            serial::with_serial(|s| s.write_str(BANNER_INFO_MISSING));
-            qemu::debug_exit(qemu::STATUS_BOOT_INFO_MISSING);
-        };
-        serial::with_serial(|s| s.write_str("Ferric-K x86_64\nBOOT OK\n"));
+        gdt::init();
+        idt::init();
 
-        if !framebuffer::init_from_boot_info(&info) {
-            qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
-        }
-        if !framebuffer::run_color_bar_self_test() {
-            qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
-        }
-        serial::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
-
-        #[cfg(feature = "panic-on-boot")]
+        #[cfg(feature = "exception-on-boot")]
         {
-            panic!("deliberate boot panic (panic-on-boot)")
+            // Deliberate #DE via a raw `div` (not Rust's checked `/`, which
+            // panics instead of faulting). 1/0 overflows the 64-bit EDX:RAX
+            // quotient, so the CPU raises vector 0 (Intel SDM Vol. 2A §DIV).
+            core::hint::black_box(1u64);
+            unsafe {
+                core::arch::asm!(
+                    "mov rax, 1",
+                    "xor edx, edx",
+                    "xor ecx, ecx",
+                    "div rcx",
+                    options(nostack),
+                );
+            }
+            unreachable!("divide-by-zero should have trapped");
         }
-        #[cfg(not(feature = "panic-on-boot"))]
-        console::kmain()
+
+        #[cfg(not(feature = "exception-on-boot"))]
+        {
+            use ferric_api::TextSink;
+
+            const BANNER_INFO_MISSING: &str = "Ferric-K x86_64\nBOOT INFO MISSING\n";
+
+            let Some(info) = limine::collect() else {
+                serial::with_serial(|s| s.write_str(BANNER_INFO_MISSING));
+                qemu::debug_exit(qemu::STATUS_BOOT_INFO_MISSING);
+            };
+            serial::with_serial(|s| s.write_str("Ferric-K x86_64\nBOOT OK\n"));
+
+            if !framebuffer::init_from_boot_info(&info) {
+                qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
+            }
+            if !framebuffer::run_color_bar_self_test() {
+                qemu::debug_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
+            }
+            serial::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
+
+            #[cfg(feature = "panic-on-boot")]
+            {
+                panic!("deliberate boot panic (panic-on-boot)")
+            }
+            #[cfg(not(feature = "panic-on-boot"))]
+            console::kmain()
+        }
     }
 
     #[cfg(all(target_arch = "aarch64", not(test)))]
