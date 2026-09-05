@@ -23,9 +23,16 @@ const INJECT_KEY: &str = "a";
 /// Serial bytes kept in the reader's rolling window for marker detection.
 const WINDOW_MAX: usize = 64;
 
-/// Exit code QEMU reports for a successful input echo on each arch.
-const X64_INPUT_ECHO_EXIT: i32 = (0x81 << 1) | 1; // STATUS_INPUT_ECHO -> 259
-const ARM64_INPUT_ECHO_EXIT: i32 = 0x81; // raw semihosting pass-through -> 129
+/// Exit code QEMU reports for a successful input echo. x86_64's isa-debug-exit
+/// value (STATUS_INPUT_ECHO<<1)|1 = 0x103 = 259, but POSIX waitpid truncates
+/// child status to 8 bits, so Linux CI sees 3; Windows reports the full 259.
+#[cfg(windows)]
+const X64_INPUT_ECHO_EXIT: i32 = (0x81 << 1) | 1;
+#[cfg(not(windows))]
+const X64_INPUT_ECHO_EXIT: i32 = ((0x81 << 1) | 1) & 0xFF;
+
+/// Raw semihosting pass-through, already < 256, so identity on every platform.
+const ARM64_INPUT_ECHO_EXIT: i32 = 0x81; // STATUS_INPUT_ECHO -> 129
 
 #[derive(Args)]
 pub struct RunArgs {
