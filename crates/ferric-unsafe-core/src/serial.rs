@@ -116,6 +116,27 @@ pub fn with_serial<R>(f: impl FnOnce(&mut Serial) -> R) -> Option<R> {
     Some(f(&mut guard))
 }
 
+/// Like [`with_serial`] but uses [`Spinlock::try_lock`]; `true` when the lock
+/// was free and `f` ran.
+pub fn with_serial_try<R>(f: impl FnOnce(&mut Serial) -> R) -> bool {
+    let Some(lock) = SERIAL.get() else {
+        return false;
+    };
+    let Some(mut guard) = lock.try_lock() else {
+        return false;
+    };
+    f(&mut guard);
+    true
+}
+
+/// Writes `s` to the COM1 UART without taking the global lock. Used only by
+/// the exception/panic dump path, which may run from inside an interrupted
+/// serial write (the lock would deadlock forever). A torn line is acceptable.
+pub fn write_emergency(s: &str) {
+    let mut uart = Serial::at(COM1_BASE);
+    expand_lf_to_crlf(s, |byte| uart.send(byte));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -117,7 +117,7 @@ fn boot_and_assert_exception(
         }
         vec![
             "-M".into(),
-            "virt".into(),
+            "virt,gic-version=2".into(),
             "-cpu".into(),
             "cortex-a72".into(),
             "-m".into(),

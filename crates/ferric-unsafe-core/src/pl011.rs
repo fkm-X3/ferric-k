@@ -4,6 +4,7 @@
 use crate::sync::{OnceLock, Spinlock};
 use crate::text::expand_lf_to_crlf;
 use crate::volatile::Volatile;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use ferric_api::TextSink;
 
 /// QEMU virt: PL011 uart0 MMIO base (QEMU `hw/arm/virt.c`, VIRT_UART).
@@ -107,8 +108,14 @@ impl TextSink for Pl011Uart {
 
 static PL011: OnceLock<Spinlock<Pl011Uart>> = OnceLock::new();
 
+/// Higher-half UART base captured at [`init_global`]; 0 before init. The raw
+/// [`UART0_BASE`] is below the 2 MiB window and never mapped at runtime, so
+/// the emergency path must reuse the mapped base or not write at all.
+static UART_VBASE: AtomicUsize = AtomicUsize::new(0);
+
 /// Brings up the PL011 at `base` and captures it into a global.
 pub fn init_global(base: usize) -> bool {
+    UART_VBASE.store(base, Ordering::Relaxed);
     let uart = Pl011Uart::new(base);
     PL011.set(Spinlock::new(uart)).is_ok()
 }
@@ -117,6 +124,19 @@ pub fn init_global(base: usize) -> bool {
 pub fn with_serial<R>(f: impl FnOnce(&mut Pl011Uart) -> R) -> Option<R> {
     let mut guard = PL011.get()?.lock();
     Some(f(&mut guard))
+}
+
+/// Writes `s` to uart0 without the global lock; no-op before [`init_global`].
+/// Used only by the exception/panic dump path, which may run from inside an
+/// interrupted serial write (the lock would deadlock forever). A torn line is
+/// acceptable.
+pub fn write_emergency(s: &str) {
+    let base = UART_VBASE.load(Ordering::Relaxed);
+    if base == 0 {
+        return;
+    }
+    let mut uart = Pl011Uart::at(base);
+    expand_lf_to_crlf(s, |byte| uart.send(byte));
 }
 
 #[cfg(test)]

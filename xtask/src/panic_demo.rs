@@ -103,7 +103,7 @@ fn boot_and_assert_panic(repo_root: &Path, arch: &str, image: &Path, timeout_sec
         }
         vec![
             "-M".into(),
-            "virt".into(),
+            "virt,gic-version=2".into(),
             "-cpu".into(),
             "cortex-a72".into(),
             "-m".into(),

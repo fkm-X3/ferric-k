@@ -281,6 +281,26 @@ static FRAMEBUFFER_REQUEST: Request<FramebufferResponse> = Request::new(FRAMEBUF
 #[unsafe(link_section = ".limine_requests")]
 static MEMMAP_REQUEST: Request<MemmapResponse> = Request::new(MEMMAP_REQUEST_ID);
 
+/// `struct limine_tsc_frequency_response` (x86-64 only).
+#[repr(C)]
+pub struct TscFrequencyResponse {
+    pub(crate) revision: u64,
+    pub(crate) frequency: u64,
+}
+
+/// `LIMINE_TSC_FREQUENCY_REQUEST_ID` (limine.h v12.6.0).
+const TSC_FREQUENCY_REQUEST_ID: [u64; 4] = feature_id(0x10f2ee1d87d195e4, 0xf747a2b78f6ddb31);
+
+#[used]
+#[unsafe(link_section = ".limine_requests")]
+static TSC_FREQUENCY_REQUEST: Request<TscFrequencyResponse> =
+    Request::new(TSC_FREQUENCY_REQUEST_ID);
+
+/// The TSC frequency reported by the bootloader (Hz), when available.
+pub fn tsc_frequency() -> Option<u64> {
+    TSC_FREQUENCY_REQUEST.response().map(|r| r.frequency)
+}
+
 #[used]
 #[unsafe(link_section = ".limine_requests.end")]
 static END_MARKER: RequestsEndMarker = RequestsEndMarker(REQUESTS_END_MARKER);

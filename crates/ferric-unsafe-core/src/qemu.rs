@@ -36,6 +36,11 @@ pub const STATUS_FRAMEBUFFER_FAULT: u8 = 0x50;
 /// `(0x60 << 1) | 1` on x86_64 and `0x60` raw on aarch64.
 pub const STATUS_EXCEPTION_DEMO: u8 = 0x60;
 
+/// 3-second timer soak completed with both IRQ and tick counting healthy;
+/// QEMU exits with code `(0x70 << 1) | 1` on x86_64 and `0x70` raw on
+/// aarch64.
+pub const STATUS_TIMER_SOAK: u8 = 0x70;
+
 /// Exit code QEMU reports for a status byte: `(status << 1) | 1`. Always
 /// odd, so crash/reset exits can never collide with a kernel-reported status.
 #[must_use]
@@ -114,11 +119,15 @@ mod tests {
             STATUS_UART_FAULT,
             STATUS_FRAMEBUFFER_MISSING,
             STATUS_FRAMEBUFFER_FAULT,
+            STATUS_EXCEPTION_DEMO,
+            STATUS_TIMER_SOAK,
         ];
         for status in statuses {
             assert_eq!(qemu_exit_code(status) % 2, 1);
         }
         assert_eq!(qemu_exit_code(STATUS_UART_FAULT), 97);
+        assert_eq!(qemu_exit_code(STATUS_EXCEPTION_DEMO), 193);
+        assert_eq!(qemu_exit_code(STATUS_TIMER_SOAK), 225);
         for i in 0..statuses.len() {
             for j in (i + 1)..statuses.len() {
                 assert_ne!(qemu_exit_code(statuses[i]), qemu_exit_code(statuses[j]));
@@ -146,6 +155,8 @@ mod tests {
         assert_eq!(semihosting_exit_code(STATUS_BOOT_OK), 16);
         assert_eq!(semihosting_exit_code(STATUS_BOOT_INFO_MISSING), 32);
         assert_eq!(semihosting_exit_code(STATUS_UART_FAULT), 48);
+        assert_eq!(semihosting_exit_code(STATUS_EXCEPTION_DEMO), 96);
+        assert_eq!(semihosting_exit_code(STATUS_TIMER_SOAK), 112);
         assert_eq!(semihosting_exit_code(u8::MAX), 255);
     }
 }

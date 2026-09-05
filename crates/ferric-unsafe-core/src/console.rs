@@ -80,7 +80,9 @@ impl Console {
 
     fn write_str(&mut self, s: &str) {
         self.put_text(s);
-        crate::framebuffer::with_framebuffer(|fb| self.render(fb));
+        if s.ends_with('\n') {
+            crate::framebuffer::with_framebuffer(|fb| self.render(fb));
+        }
         mirror_to_serial(s);
     }
 
@@ -130,12 +132,14 @@ impl Console {
             for col in 0..self.cols {
                 let cell = self.cells[(row * self.cols + col) as usize];
                 let glyph = font.glyph_index_for(cell.glyph).unwrap_or(0);
+                let fg_word = fb.encode(cell.fg);
+                let bg_word = fb.encode(cell.bg);
                 let (px, py) = (col * cw, row * ch);
                 for gy in 0..ch {
                     for gx in 0..cw {
                         let set = font.glyph_pixel(glyph, gx, gy).unwrap_or(false);
-                        let color = if set { cell.fg } else { cell.bg };
-                        let _ = fb.write_pixel(px + gx, py + gy, color);
+                        let word = if set { fg_word } else { bg_word };
+                        let _ = fb.write_word(px + gx, py + gy, word);
                     }
                 }
             }
@@ -150,26 +154,38 @@ fn mirror_to_serial(s: &str) {
     crate::pl011::with_serial(|serial| ferric_api::TextSink::write_str(serial, s));
 }
 
-/// Crash screen: fills the surface panic-red, prints `lines` in white through
-/// the text grid, mirrors them to serial, then parks the CPU (called by the
-/// panic handler; never returns).
+/// Lock-free panic-path mirror to the arch serial sink.
+fn emergency_write(s: &str) {
+    #[cfg(target_arch = "x86_64")]
+    crate::serial::write_emergency(s);
+    #[cfg(target_arch = "aarch64")]
+    crate::pl011::write_emergency(s);
+}
+
+/// Crash screen: mirrors `lines` to serial lock-free, then best-effort paints
+/// a panic-red panel (skipped when either the console or framebuffer lock is
+/// already held — e.g. a panic mid-`println!` — so the dump can never
+/// deadlock), then parks the CPU. Called by the panic handler; never returns.
 pub fn render_panic(lines: &[&str]) -> ! {
-    let (fg, bg) = (PANIC_FG, PANIC_BG);
-    let mut console = CONSOLE.lock();
-    if (console.cols == 0 || console.rows == 0)
-        && let Some((w, h)) = crate::framebuffer::with_framebuffer(|fb| (fb.width(), fb.height()))
-    {
-        console.set_geometry(w, h);
-    }
-    console.panic_grid(lines, fg, bg);
-    crate::framebuffer::with_framebuffer(|fb| {
-        let _ = fb.fill_rect(0, 0, fb.width(), fb.height(), bg);
-        console.render(fb);
-    });
-    drop(console);
     for line in lines {
-        mirror_to_serial(line);
-        mirror_to_serial("\n");
+        emergency_write(line);
+        emergency_write("\n");
+    }
+    if let Some(mut console) = CONSOLE.try_lock() {
+        if (console.cols == 0 || console.rows == 0)
+            && let Some((w, h)) =
+                crate::framebuffer::with_framebuffer_try(|fb| (fb.width(), fb.height()))
+        {
+            console.set_geometry(w, h);
+        }
+        console.panic_grid(lines, PANIC_FG, PANIC_BG);
+        drop(console);
+        let _ = crate::framebuffer::with_framebuffer_try(|fb| {
+            let _ = fb.fill_rect(0, 0, fb.width(), fb.height(), PANIC_BG);
+            if let Some(c) = CONSOLE.try_lock() {
+                c.render(fb);
+            }
+        });
     }
     crate::halt()
 }
@@ -183,11 +199,33 @@ pub fn kmain() -> ! {
     CONSOLE.lock().set_geometry(fb_width, fb_height);
 
     println!("Hello from Ferric-K!");
+    soak_timer();
+}
 
-    crate::dwell_for_display();
+/// Timer soak: keeps the CPU parked on interrupts and re-renders the uptime
+/// readout every quarter second until the 3-second mark, then proves the
+/// gate and exits with the dedicated status.
+const SOAK_DURATION_NS: u64 = 3 * crate::time::NANOS_PER_SEC;
+const RENDER_PERIOD_NS: u64 = 250_000_000;
 
-    #[cfg(target_arch = "x86_64")]
-    crate::qemu::debug_exit(crate::qemu::STATUS_BOOT_OK);
-    #[cfg(target_arch = "aarch64")]
-    crate::qemu::semihosting_exit(crate::qemu::STATUS_BOOT_OK);
+fn soak_timer() -> ! {
+    let source = crate::time::time_source();
+    let start = source.uptime_ns();
+    let mut last_render = start;
+    loop {
+        let now = source.uptime_ns();
+        if now.saturating_sub(last_render) >= RENDER_PERIOD_NS {
+            last_render = now;
+            let ds = (now - start) / crate::time::NANOS_PER_SEC;
+            let dms = ((now - start) % crate::time::NANOS_PER_SEC) / 1_000_000;
+            println!("UP {:1}.{:03}s", ds, dms);
+        }
+        if now.saturating_sub(start) >= SOAK_DURATION_NS {
+            println!("UPTIME OK");
+            #[cfg(target_arch = "x86_64")]
+            crate::qemu::debug_exit(crate::qemu::STATUS_TIMER_SOAK);
+            #[cfg(target_arch = "aarch64")]
+            crate::qemu::semihosting_exit(crate::qemu::STATUS_TIMER_SOAK);
+        }
+    }
 }

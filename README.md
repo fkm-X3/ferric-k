@@ -32,7 +32,7 @@ apt/dnf/pacman on Linux).
 ```
 ferric-kernel   thin bin, #![forbid(unsafe_code)]
     ↓
-ferric-api      arch-neutral traits (TextSink, ...)
+ferric-api      arch-neutral traits (TextSink, TimeSource, ...)
 ferric-safe-core   pure logic: console model, font, logging (host-testable)
 ferric-unsafe-core   ALL unsafe lives here: entry, drivers, locks, Limine ABI
 ```
@@ -50,7 +50,8 @@ decision log.
   semantics against mock MMIO, Limine ABI layout, MMU descriptors).
 - **Smoke boots**: `cargo xtask check` builds the dual-arch image and boots
   both kernels headless in QEMU, asserting serial banner markers
-  (`BOOT OK`, `FRAMEBUFFER OK`, `Hello from Ferric-K!`) and the expected
-  exit code per architecture.
+  (`BOOT OK`, `FRAMEBUFFER OK`, `Hello from Ferric-K!`, real-time `UP`
+  readouts, `UPTIME OK`) and a clean exit per architecture: code 225 on
+  x86_64, 112 on aarch64.
 - **Panic demo**: `cargo xtask panic-demo` exercises the red-screen crash
   panel path on both architectures.

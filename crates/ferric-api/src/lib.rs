@@ -11,6 +11,13 @@ pub trait TextSink {
     fn write_str(&mut self, s: &str);
 }
 
+/// A monotonic clock measuring time since the kernel's uptime counter
+/// started, implemented per architecture.
+pub trait TimeSource {
+    /// Elapsed time since the counter started, in whole nanoseconds.
+    fn uptime_ns(&self) -> u64;
+}
+
 /// An 8-bit-per-channel color, independent of a surface's pixel layout.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Rgb {

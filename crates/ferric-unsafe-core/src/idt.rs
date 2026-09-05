@@ -77,6 +77,10 @@ unsafe extern "sysv64" {
     fn exc_vector_18();
     fn exc_vector_20();
     fn exc_vector_30();
+
+    // Timer IRQ0 handler (defined in interrupt.rs); returns via iretq so the
+    // interrupted task continues.
+    fn irq_stub_irq0();
 }
 
 /// Populates the IDT with CPU exception gates and loads it via `lidt`.
@@ -106,6 +110,9 @@ pub fn init() {
         // IST=1 for vector 8 (double fault) → TSS.ist1 (dedicated stack).
         set_entry(13, handler_addr(exc_vector_13), KERNEL_CODE_SELECTOR, 0);
         set_entry(14, handler_addr(exc_vector_14), KERNEL_CODE_SELECTOR, 0);
+
+        // Timer IRQ0 x86_64 landed on the PIC-reprogrammed vector 0x20.
+        set_entry(0x20, handler_addr(irq_stub_irq0), KERNEL_CODE_SELECTOR, 0);
 
         let idt_ptr = IdtPtr {
             limit: (core::mem::size_of::<IdtEntry>() * IDT_ENTRIES - 1) as u16,

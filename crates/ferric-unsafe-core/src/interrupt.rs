@@ -64,10 +64,17 @@ pub struct ExceptionFrame {
 ///
 /// Bypasses the console lock and framebuffer to avoid re-entrancy issues.
 /// Called only from exception/panic paths where the normal output path may
-/// be locked or broken.
+/// be locked or broken. Takes the serial lock only if it is immediately
+/// available; otherwise writes raw to the port so a dump that fires inside a
+/// print cannot deadlock on the spinlock the interrupted write holds.
 fn serial_write(s: &str) {
     #[cfg(target_arch = "x86_64")]
-    crate::serial::with_serial(|serial| serial.write_str(s));
+    {
+        let taken = crate::serial::with_serial_try(|serial| serial.write_str(s));
+        if !taken {
+            crate::serial::write_emergency(s);
+        }
+    }
     #[cfg(target_arch = "aarch64")]
     crate::pl011::with_serial(|serial| serial.write_str(s));
 }
@@ -307,6 +314,82 @@ exc_stub_with_err!(exc_vector_13, 13); // #GP general protection
 exc_stub_with_err!(exc_vector_14, 14); // #PF page fault
 
 // ---------------------------------------------------------------------------
+// IRQ0 (PIT timer) stub: a distinct handler because it must return. Gates
+// are 64-bit interrupt type, so IF is cleared on entry and the handler runs
+// atomically with respect to further IRQs — it never re-enables, which also
+// means no nested deliveries can clobber the frame or the stack below RSP.
+// ---------------------------------------------------------------------------
+
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+unsafe extern "sysv64" fn irq_stub_irq0() -> ! {
+    core::arch::naked_asm!(
+        "push 0",
+        "push 0x20",
+        "push r11",
+        "push r10",
+        "push r9",
+        "push r8",
+        "push rdi",
+        "push rsi",
+        "push rdx",
+        "push rcx",
+        "push rax",
+        "mov rdi, rsp",
+        "call {tramp}",
+        "pop rax",
+        "pop rcx",
+        "pop rdx",
+        "pop rsi",
+        "pop rdi",
+        "pop r8",
+        "pop r9",
+        "pop r10",
+        "pop r11",
+        "add rsp, 16",
+        "iretq",
+        tramp = sym irq_handler_wrapper,
+    );
+}
+
+/// Naked trampoline: saves the incoming RSP in r12 and the frame pointer in
+/// r13 (both callee-saved, preserved across the Rust call), aligns RSP for the
+/// SysV-64 ABI, calls the Rust handler, then restores both and returns into
+/// the stub.
+#[cfg(target_arch = "x86_64")]
+#[unsafe(naked)]
+unsafe extern "sysv64" fn irq_handler_wrapper() -> usize {
+    core::arch::naked_asm!(
+        "mov r12, rsp",
+        "mov r13, rdi",
+        "and rsp, -16",
+        "call {handler}",
+        "mov rsp, r12",
+        "ret",
+        handler = sym irq_common,
+    );
+}
+
+/// Dispatches an IRQ frame: the PIT handler for IRQ0, any other vector
+/// falls through to the exception dump-and-halt path.
+#[cfg(target_arch = "x86_64")]
+unsafe extern "sysv64" fn irq_common(frame: *const ExceptionFrame) -> usize {
+    // SAFETY: `frame` points at the ExceptionFrame pushed by `irq_stub_irq0`
+    // on the current stack; the stub contract keeps it valid for this call.
+    let frame = unsafe { &*frame };
+    if frame.vector == crate::pit::IRQ0_VECTOR as u64 {
+        crate::pit::handle_timer_irq();
+    } else {
+        let mut buf = [0u8; 1024];
+        let msg = format_exception(&mut buf, frame);
+        serial_write(msg);
+        crate::halt();
+    }
+    0
+}
+
+// ---------------------------------------------------------------------------
 // aarch64 vector table and save stubs.
 //
 // VBAR_EL1 must hold the start of a 2048-byte table (ARM DDI 0487, "Exception
@@ -350,10 +433,12 @@ pub unsafe extern "C" fn exception_vector_tables() -> ! {
         ".balign 0x80",
         "b exc_serror",
         ".balign 0x80",
-        // EL1h group, SP_EL1.
+        // EL1h group, SP_EL1. IRQs land here (kernel runs SPSel=1) and go
+        // through `exc_irq_ret`, which returns from the interrupt instead of
+        // dumping.
         "b exc_sync",
         ".balign 0x80",
-        "b exc_irq",
+        "b exc_irq_ret",
         ".balign 0x80",
         "b exc_fiq",
         ".balign 0x80",
@@ -418,9 +503,74 @@ pub unsafe extern "C" fn exception_vector_tables() -> ! {
         "EXC_HANDLER exc_irq, 1",
         "EXC_HANDLER exc_fiq, 2",
         "EXC_HANDLER exc_serror, 3",
+        // IRQ return stub: identical register capture, but hands the frame to
+        // `irq_common` (no deref, just the timer ack/re-arm) and then eret
+        // back to the interrupted instruction with the saved ELR/SPSR.
+        ".macro IRQ_HANDLER label",
+        "\\label:",
+        "sub sp, sp, #304",
+        "stp x0, x1, [sp, #0]",
+        "stp x2, x3, [sp, #16]",
+        "stp x4, x5, [sp, #32]",
+        "stp x6, x7, [sp, #48]",
+        "stp x8, x9, [sp, #64]",
+        "stp x10, x11, [sp, #80]",
+        "stp x12, x13, [sp, #96]",
+        "stp x14, x15, [sp, #112]",
+        "stp x16, x17, [sp, #128]",
+        "stp x18, x19, [sp, #144]",
+        "stp x20, x21, [sp, #160]",
+        "stp x22, x23, [sp, #176]",
+        "stp x24, x25, [sp, #192]",
+        "stp x26, x27, [sp, #208]",
+        "stp x28, x29, [sp, #224]",
+        "str x30, [sp, #240]",
+        "add x16, sp, #304",
+        "str x16, [sp, #248]",
+        "mrs x17, elr_el1",
+        "str x17, [sp, #256]",
+        "mrs x18, spsr_el1",
+        "str x18, [sp, #264]",
+        "mrs x19, esr_el1",
+        "str x19, [sp, #272]",
+        "mrs x20, far_el1",
+        "str x20, [sp, #280]",
+        "mov x21, #1",
+        "str x21, [sp, #288]",
+        "mov x0, sp",
+        "bl irq_common",
+        "ldp x0, x1, [sp, #0]",
+        "ldp x2, x3, [sp, #16]",
+        "ldp x4, x5, [sp, #32]",
+        "ldp x6, x7, [sp, #48]",
+        "ldp x8, x9, [sp, #64]",
+        "ldp x10, x11, [sp, #80]",
+        "ldp x12, x13, [sp, #96]",
+        "ldp x14, x15, [sp, #112]",
+        "ldp x16, x17, [sp, #128]",
+        "ldp x18, x19, [sp, #144]",
+        "ldp x20, x21, [sp, #160]",
+        "ldp x22, x23, [sp, #176]",
+        "ldp x24, x25, [sp, #192]",
+        "ldp x26, x27, [sp, #208]",
+        "ldp x28, x29, [sp, #224]",
+        "ldr x30, [sp, #240]",
+        "add sp, sp, #304",
+        "eret",
+        ".endm",
+        "IRQ_HANDLER exc_irq_ret",
         "hang:",
         "b hang",
     );
+}
+
+/// Acknowledges and services the pending IRQ, returning into the vector
+/// epoxy. The frame pointer is currently unused on aarch64 — the handler
+/// only touches the GIC — but it is passed for parity with the dump path.
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+pub extern "C" fn irq_common(_frame: *const ExceptionFrame) {
+    crate::gictimer::handle_timer_irq();
 }
 
 /// Format the dump the stubs captured, write it to serial, and halt the CPU.
@@ -465,6 +615,57 @@ pub fn init() {
         );
     }
     debug_assert_eq!(vbar % 2048, 0);
+}
+
+/// Disables the local APIC so external interrupts take the legacy 8259 path
+/// (PIC mode). The timer, keyboard, and every PMI on the BSP reach the CPU
+/// via the 8259 in this configuration; required before `enable()`, because a
+/// software-enabled LAPIC masks the PIC's INTR line and interrupts are lost.
+#[cfg(target_arch = "x86_64")]
+pub fn revert_to_pic_mode() {
+    const IA32_APIC_BASE: u32 = 0x1B;
+    let mut lo: u32;
+    let mut hi: u32;
+    // SAFETY: rdmsr/wrmsr of IA32_APIC_BASE (Intel SDM Vol. 3A §10.4.3);
+    // single-threaded early boot, CPL 0. Bit 11 is APIC global enable.
+    unsafe {
+        core::arch::asm!(
+            "rdmsr",
+            in("ecx") IA32_APIC_BASE,
+            out("eax") lo,
+            out("edx") hi,
+            options(nostack, preserves_flags),
+        );
+        core::arch::asm!(
+            "wrmsr",
+            in("ecx") IA32_APIC_BASE,
+            in("eax") lo & !(1 << 11),
+            in("edx") hi,
+            options(nostack, preserves_flags),
+        );
+    }
+}
+
+/// Unmasks maskable interrupts: `sti` on x86_64, DAIF.I clear on aarch64.
+/// Call once the CPU's vector table, IDT, and timer sources are installed.
+#[cfg(target_arch = "x86_64")]
+pub fn enable() {
+    // SAFETY: `sti` clears IF; interrupts are only safely delivered once the
+    // IDT and PIT are installed, which boot guarantees before calling this.
+    unsafe {
+        core::arch::asm!("sti", options(nostack, preserves_flags));
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(target_arch = "aarch64")]
+pub fn enable() {
+    // SAFETY: `msr daifclr, #4` clears only the DAIF I bit, unmasking IRQs;
+    // boot installs the vector table and GIC timer first.
+    unsafe {
+        core::arch::asm!("msr daifclr, #4", options(nostack, preserves_flags));
+    }
+    core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
 // ---------------------------------------------------------------------------
@@ -513,11 +714,12 @@ impl IrqGuard {
     pub fn disable() -> Self {
         let daif: u64;
         // SAFETY: `mrs daif` reads the whole exception-mask register;
-        // `msr daifset, #1` sets only the IRQ mask bit I (ARM DDI 0487).
+        // `msr daifset, #4` sets only the IRQ mask bit I — the immediate
+        // encodes D=1,A=2,I=4,F=8 (ARM DDI 0487, DAIFSET).
         unsafe {
             core::arch::asm!(
                 "mrs {daif}, daif",
-                "msr daifset, #1",
+                "msr daifset, #4",
                 daif = out(reg) daif,
                 options(nostack, preserves_flags),
             );

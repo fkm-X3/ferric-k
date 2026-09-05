@@ -30,6 +30,13 @@ pub mod gdt;
 pub mod idt;
 #[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(test)))]
 pub mod interrupt;
+// GICv2 + generic timer: register semantics run on the host; the asm-backed
+// pieces are aarch64-only.
+#[cfg(any(target_arch = "aarch64", test))]
+pub mod gictimer;
+// PIT + 8259A for x86_64; host-built because the I/O helpers compile there.
+#[cfg(target_arch = "x86_64")]
+pub mod pit;
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod pl011;
 #[cfg(target_arch = "x86_64")]
@@ -39,6 +46,7 @@ pub mod qemu;
 pub mod serial;
 pub mod sync;
 pub mod text;
+pub mod time;
 pub mod volatile;
 // Page-descriptor logic is host-tested like the drivers it supports.
 #[cfg(any(target_arch = "aarch64", test))]
@@ -48,16 +56,22 @@ pub mod mmu;
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
 
-/// Keeps the drawn frame visible for a few emulator seconds before the
-/// deterministic exit; replaced by real timers later.
-#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub const DISPLAY_DWELL_ITERATIONS: u64 = 2_000_000;
-
-#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
-pub fn dwell_for_display() {
-    for _ in 0..DISPLAY_DWELL_ITERATIONS {
-        core::hint::spin_loop();
+/// Wakes on the next interrupt: `hlt` on x86_64, `wfi` on aarch64; returns
+/// as soon as one is delivered.
+pub fn wait_for_interrupt() {
+    #[cfg(target_arch = "x86_64")]
+    // SAFETY: `hlt` parks the CPU until an interrupt arrives (Intel SDM
+    // Vol. 2A); returns when one is delivered.
+    unsafe {
+        core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
     }
+    #[cfg(target_arch = "aarch64")]
+    // SAFETY: `wfi` suspends until an interrupt wakes the CPU (ARM DDI 0487).
+    unsafe {
+        core::arch::asm!("wfi", options(nomem, nostack, preserves_flags));
+    }
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    core::hint::spin_loop();
 }
 
 /// Common early-boot path after bootloader handoff; still on the bootloader
@@ -96,6 +110,11 @@ pub fn boot() -> ! {
             use ferric_api::TextSink;
 
             const BANNER_INFO_MISSING: &str = "Ferric-K x86_64\nBOOT INFO MISSING\n";
+
+            crate::pit::init();
+            crate::time::init_tsc(crate::limine::tsc_frequency());
+            interrupt::revert_to_pic_mode();
+            interrupt::enable();
 
             let Some(info) = limine::collect() else {
                 serial::with_serial(|s| s.write_str(BANNER_INFO_MISSING));
@@ -150,6 +169,11 @@ pub fn boot() -> ! {
 
         #[cfg(not(feature = "exception-on-boot"))]
         {
+            if !gictimer::init(info.hhdm_offset) {
+                qemu::semihosting_exit(qemu::STATUS_BOOT_INFO_MISSING);
+            }
+            interrupt::enable();
+
             if !framebuffer::init_from_boot_info(&info) {
                 qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
             }

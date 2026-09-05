@@ -171,7 +171,9 @@ impl FrameBuffer {
         ((u64::from(value) * max) / 255) << mask.shift
     }
 
-    fn encode(&self, color: Rgb) -> u64 {
+    /// Encodes `color` into the surface's pixel word. `pub(crate)` so the
+    /// text renderer can precompute one word per cell instead of per pixel.
+    pub(crate) fn encode(&self, color: Rgb) -> u64 {
         Self::encode_channel(self.red, color.r)
             | Self::encode_channel(self.green, color.g)
             | Self::encode_channel(self.blue, color.b)
@@ -179,19 +181,59 @@ impl FrameBuffer {
 
     fn write_unchecked(&mut self, x: u32, y: u32, pixel: u64) {
         let offset = y as usize * self.pitch + x as usize * self.bytes_per_pixel;
-        for (i, byte) in pixel
-            .to_le_bytes()
-            .into_iter()
-            .take(self.bytes_per_pixel)
-            .enumerate()
-        {
-            // SAFETY: bounds were validated against the captured geometry
-            // whose pitch covers `width * bytes_per_pixel`, keeping
-            // `offset + i` inside the loader-mapped surface; that mapping
-            // stays valid for the kernel lifetime because bootloader memory
-            // is never reclaimed.
-            unsafe { self.ptr.add(offset + i).write_volatile(byte) };
+        // SAFETY: bounds were validated against the captured geometry whose
+        // pitch covers `width * bytes_per_pixel`, and `pixel` was encoded
+        // with `encode`, so `offset + n` never escapes the loader-mapped
+        // surface and the value fits `self.bytes_per_pixel`; that mapping
+        // stays valid for the kernel lifetime because bootloader memory is
+        // never reclaimed. Storing the full pixel once (rather than per
+        // byte) keeps the hot render path wide on both QEMU TCG and silicon.
+        // SAFETY: `pixel` is the converted little-endian value; the store
+        // width matches `bytes_per_pixel.`
+        unsafe {
+            match self.bytes_per_pixel {
+                8 => self
+                    .ptr
+                    .add(offset)
+                    .cast::<u64>()
+                    .write_volatile(pixel.to_le()),
+                4 => self
+                    .ptr
+                    .add(offset)
+                    .cast::<u32>()
+                    .write_volatile(pixel.to_le() as u32),
+                2 => self
+                    .ptr
+                    .add(offset)
+                    .cast::<u16>()
+                    .write_volatile(pixel.to_le() as u16),
+                // Non-power-of-two pixels (24 bpp) have no single narrow
+                // store; fall back to per-byte writes.
+                _ => {
+                    for (i, b) in pixel
+                        .to_le_bytes()
+                        .into_iter()
+                        .take(self.bytes_per_pixel)
+                        .enumerate()
+                    {
+                        self.ptr.add(offset + i).write_volatile(b);
+                    }
+                }
+            }
         }
+    }
+
+    /// Writes one pre-encoded pixel word; errors when `(x, y)` lies outside
+    /// the surface. Used by the text renderer to skip re-encoding per pixel.
+    // console `render` chains to this via private `write_str`; the test-unit
+    // dead-code pass only sees that chain reachable when a test touches it.
+    #[cfg_attr(test, allow(dead_code))]
+    pub(crate) fn write_word(&mut self, x: u32, y: u32, word: u64) -> Result<(), FramebufferError> {
+        if x >= self.width || y >= self.height {
+            return Err(FramebufferError::OutOfBounds);
+        }
+        self.write_unchecked(x, y, word);
+        Ok(())
     }
 
     /// Writes one pixel; errors when `(x, y)` lies outside the surface.
@@ -260,6 +302,13 @@ pub fn init_from_boot_info(info: &limine::BootInfo) -> bool {
 /// Runs `f` with exclusive access; `None` before a successful init.
 pub fn with_framebuffer<R>(f: impl FnOnce(&mut FrameBuffer) -> R) -> Option<R> {
     let mut guard = FRAMEBUFFER.get()?.lock();
+    Some(f(&mut guard))
+}
+
+/// Like [`with_framebuffer`] but non-blocking: `None` when the surface lock
+/// is already held. Used by the panic dump, which must never deadlock.
+pub fn with_framebuffer_try<R>(f: impl FnOnce(&mut FrameBuffer) -> R) -> Option<R> {
+    let mut guard = FRAMEBUFFER.get()?.try_lock()?;
     Some(f(&mut guard))
 }
 
