@@ -28,7 +28,7 @@ pub mod mem;
 pub mod gdt;
 #[cfg(all(target_arch = "x86_64", not(test)))]
 pub mod idt;
-#[cfg(all(target_arch = "x86_64", not(test)))]
+#[cfg(all(any(target_arch = "x86_64", target_arch = "aarch64"), not(test)))]
 pub mod interrupt;
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod pl011;
@@ -134,21 +134,37 @@ pub fn boot() -> ! {
             qemu::semihosting_exit(qemu::STATUS_UART_FAULT);
         }
         pl011::with_serial(|s| s.write_str("Ferric-K aarch64\nBOOT OK\n"));
+        interrupt::init();
 
-        if !framebuffer::init_from_boot_info(&info) {
-            qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
-        }
-        if !framebuffer::run_color_bar_self_test() {
-            qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
-        }
-        pl011::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
-
-        #[cfg(feature = "panic-on-boot")]
+        #[cfg(feature = "exception-on-boot")]
         {
-            panic!("deliberate boot panic (panic-on-boot)")
+            // Deliberate `brk #0`: synchronous exception at EL1 with EC 0x3C
+            // (AArch64 BRK), mirroring the x86_64 `div` test fault.
+            // SAFETY: `brk #0` traps into the installed vector table, which
+            // captures the frame and never returns to this point.
+            unsafe {
+                core::arch::asm!("brk #0", options(nostack));
+            }
+            unreachable!("brk should have trapped");
         }
-        #[cfg(not(feature = "panic-on-boot"))]
-        console::kmain()
+
+        #[cfg(not(feature = "exception-on-boot"))]
+        {
+            if !framebuffer::init_from_boot_info(&info) {
+                qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_MISSING);
+            }
+            if !framebuffer::run_color_bar_self_test() {
+                qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
+            }
+            pl011::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
+
+            #[cfg(feature = "panic-on-boot")]
+            {
+                panic!("deliberate boot panic (panic-on-boot)")
+            }
+            #[cfg(not(feature = "panic-on-boot"))]
+            console::kmain()
+        }
     }
 
     #[cfg(any(not(any(target_arch = "x86_64", target_arch = "aarch64")), test))]

@@ -28,6 +28,10 @@ pub extern "C" fn _start() -> ! {
         "mov x10, #16",
         "neg x10, x10",
         "and x9, x9, x10",
+        // Fix the SP bank: exceptions at EL1 use SP_EL1, so from here on the
+        // kernel runs with SPSel=1 and the aligned stack lives in SP_EL1.
+        // Handoff may have left the stack in SP_EL0 (SPSel=0).
+        "msr spsel, #1",
         "mov sp, x9",
         "bl {boot}",
         "brk #0",

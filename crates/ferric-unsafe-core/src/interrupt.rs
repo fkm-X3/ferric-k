@@ -1,5 +1,6 @@
-//! CPU exception handling: assembly stubs for x86_64 vectors, a common
-//! diagnostic dump to serial, and an RAII interrupt-masking guard.
+//! CPU exception handling: assembly stubs for x86_64 vectors, the aarch64
+//! exception vector table and save stubs, a common diagnostic dump to serial,
+//! and an RAII interrupt-masking guard.
 
 use core::fmt;
 use core::fmt::Write;
@@ -14,6 +15,7 @@ use ferric_api::TextSink;
 /// For vectors without error code, the `error_code` field is a dummy zero
 /// pushed by the stub. For vectors with error code (13, 14), it is the
 /// real value from the CPU.
+#[cfg(target_arch = "x86_64")]
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ExceptionFrame {
@@ -33,6 +35,29 @@ pub struct ExceptionFrame {
     rip: u64,
     cs: u64,
     rflags: u64,
+}
+
+/// CPU state saved by the aarch64 vector-table stubs for one exception (ARM
+/// DDI 0487, "AArch64 exception entry"). Layout matches the stub's save
+/// sequence so the frame is a direct view over the pushed stack region.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ExceptionFrame {
+    /// X0..X30 at the exception point.
+    x: [u64; 31],
+    /// Stack pointer value at exception entry.
+    sp: u64,
+    /// Exception link register (instruction address plus reason bits).
+    elr: u64,
+    /// Saved PSTATE.
+    spsr: u64,
+    /// Exception syndrome register.
+    esr: u64,
+    /// Fault address register.
+    far: u64,
+    /// Classifier from the taking stub: 0 sync, 1 irq, 2 fiq, 3 serror.
+    kind: u64,
 }
 
 /// Write a pre-formatted byte slice directly to serial.
@@ -67,6 +92,7 @@ impl fmt::Write for BufWriter<'_> {
 }
 
 /// Format the exception register dump into `buf` and return the written slice.
+#[cfg(target_arch = "x86_64")]
 fn format_exception<'a>(buf: &'a mut [u8], frame: &ExceptionFrame) -> &'a str {
     let pos = {
         let mut w = BufWriter { buf, pos: 0 };
@@ -103,10 +129,61 @@ fn format_exception<'a>(buf: &'a mut [u8], frame: &ExceptionFrame) -> &'a str {
     core::str::from_utf8(&buf[..pos]).unwrap_or("exception (utf8 error)")
 }
 
+/// Format an aarch64 exception dump into `buf` and return the written slice.
+#[cfg(target_arch = "aarch64")]
+fn format_exception<'a>(buf: &'a mut [u8], frame: &ExceptionFrame) -> &'a str {
+    let pos = {
+        let mut w = BufWriter { buf, pos: 0 };
+        let kind = match frame.kind {
+            0 => "SYNC",
+            1 => "IRQ",
+            2 => "FIQ",
+            _ => "SERROR",
+        };
+        let _ = writeln!(
+            w,
+            "EXCEPTION: kind {kind}, ESR 0x{:08X} (EC {:#X})",
+            frame.esr,
+            (frame.esr >> 26) & 0x3F
+        );
+        for start in (0..28).step_by(4) {
+            let _ = writeln!(
+                w,
+                "  X{:<2}={:016X} X{:<2}={:016X} X{:<2}={:016X} X{:<2}={:016X}",
+                start,
+                frame.x[start],
+                start + 1,
+                frame.x[start + 1],
+                start + 2,
+                frame.x[start + 2],
+                start + 3,
+                frame.x[start + 3],
+            );
+        }
+        let _ = writeln!(
+            w,
+            "  X28={:016X} X29={:016X} X30={:016X}",
+            frame.x[28], frame.x[29], frame.x[30]
+        );
+        let _ = writeln!(
+            w,
+            "  SP ={:016X} ELR={:016X} SPSR={:08X}",
+            frame.sp, frame.elr, frame.spsr
+        );
+        let _ = writeln!(w, "  ESR={:016X} FAR={:016X}", frame.esr, frame.far);
+        let _ = writeln!(w, "KERNEL HALT");
+        let _ = w.write_str("---\n");
+        w.pos
+    };
+    // SAFETY: `pos` is always <= buf.len(); slicing is valid.
+    core::str::from_utf8(&buf[..pos]).unwrap_or("exception (utf8 error)")
+}
+
 /// Read the exception frame from the pointer saved by the assembly stubs,
 /// format a register dump, write it to serial, and halt the CPU.
 ///
 /// This function never returns.
+#[cfg(target_arch = "x86_64")]
 unsafe extern "sysv64" fn exception_common(frame: *const ExceptionFrame) -> ! {
     // SAFETY: `frame` points to the ExceptionFrame pushed by the assembly
     // stubs on the current CPU stack; its layout and lifetime are guaranteed
@@ -123,6 +200,7 @@ unsafe extern "sysv64" fn exception_common(frame: *const ExceptionFrame) -> ! {
 ///
 /// The `call` instruction pushes a return address (8 bytes), making RSP
 /// 16-byte aligned per the SysV-64 ABI when `exception_common` is entered.
+#[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
 unsafe extern "sysv64" fn common_handler_wrapper() -> ! {
     // SAFETY: naked function contains only inline assembly; no Rust
@@ -143,6 +221,7 @@ unsafe extern "sysv64" fn common_handler_wrapper() -> ! {
 // push — the CPU already placed the error code on the stack.
 // ---------------------------------------------------------------------------
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! exc_stub_no_err {
     ($name:ident, $vector:expr) => {
         #[unsafe(naked)]
@@ -168,6 +247,7 @@ macro_rules! exc_stub_no_err {
     };
 }
 
+#[cfg(target_arch = "x86_64")]
 macro_rules! exc_stub_with_err {
     ($name:ident, $vector:expr) => {
         #[unsafe(naked)]
@@ -193,39 +273,215 @@ macro_rules! exc_stub_with_err {
 }
 
 // Vectors without error code (Intel SDM Vol. 3A §6.12, Table 6-1).
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_0, 0); // #DE divide error
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_1, 1); // #DB debug
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_2, 2); // NMI
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_3, 3); // #BP breakpoint
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_4, 4); // #OF overflow
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_5, 5); // #BR bound range
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_6, 6); // #UD invalid opcode
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_7, 7); // #NM device not available
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_9, 9); // #MF x87 FPU error
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_16, 16); // #MF x87 FPU alignment check
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_18, 18); // #MC machine check
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_20, 20); // #XM SIMD exception
+#[cfg(target_arch = "x86_64")]
 exc_stub_no_err!(exc_vector_30, 30); // #CP control protection
 
 // Vectors with error code (Intel SDM Vol. 3A §6.12, Table 6-1).
+#[cfg(target_arch = "x86_64")]
 exc_stub_with_err!(exc_vector_13, 13); // #GP general protection
+#[cfg(target_arch = "x86_64")]
 exc_stub_with_err!(exc_vector_14, 14); // #PF page fault
 
 // ---------------------------------------------------------------------------
-// IrqGuard: RAII interrupt masking via RFLAGS.IF.
+// aarch64 vector table and save stubs.
+//
+// VBAR_EL1 must hold the start of a 2048-byte table (ARM DDI 0487, "Exception
+// Vector Table"); the naked fn below emits the table plus four per-class
+// stubs as one assembly block. All sixteen entries route to the dump-and-halt
+// path, so the kernel never continues memory-unsafely from a fault.
 // ---------------------------------------------------------------------------
 
-/// RAII guard that saves the interrupt flag state on creation and restores it
+// Address of the asm label `exception_vector_table` for [`crate::interrupt::init`];
+// defined by the naked fn below and linked here so `init` can install it.
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" {
+    fn exception_vector_table();
+}
+
+/// Emits the exception vector table and per-class save stubs as one assembly
+/// block. `.balign`/`.global` place `exception_vector_table` at the
+/// architectural VBAR alignment; each entry branches to its class stub, which
+/// captures the [`ExceptionFrame`] layout and transfers to
+/// [`exception_common`]. `exception_common` never returns, so the stubs end on
+/// a shared `hang` loop as a safety net.
+///
+/// # Safety
+/// The function body is raw assembly with no Rust prologue/epilogue; it must
+/// not be called from Rust — only branched into via the vector table.
+#[cfg(target_arch = "aarch64")]
+#[unsafe(naked)]
+pub unsafe extern "C" fn exception_vector_tables() -> ! {
+    // SAFETY: naked function contains only inline assembly; the directives
+    // and instructions define the vector table contract in full.
+    core::arch::naked_asm!(
+        ".balign 2048",
+        ".global exception_vector_table",
+        "exception_vector_table:",
+        // EL1t group, SP_EL0.
+        "b exc_sync",
+        ".balign 0x80",
+        "b exc_irq",
+        ".balign 0x80",
+        "b exc_fiq",
+        ".balign 0x80",
+        "b exc_serror",
+        ".balign 0x80",
+        // EL1h group, SP_EL1.
+        "b exc_sync",
+        ".balign 0x80",
+        "b exc_irq",
+        ".balign 0x80",
+        "b exc_fiq",
+        ".balign 0x80",
+        "b exc_serror",
+        ".balign 0x80",
+        // EL0 group, AArch64.
+        "b exc_sync",
+        ".balign 0x80",
+        "b exc_irq",
+        ".balign 0x80",
+        "b exc_fiq",
+        ".balign 0x80",
+        "b exc_serror",
+        ".balign 0x80",
+        // EL0 group, AArch32.
+        "b exc_sync",
+        ".balign 0x80",
+        "b exc_irq",
+        ".balign 0x80",
+        "b exc_fiq",
+        ".balign 0x80",
+        "b exc_serror",
+        // Zero-fill the table tail: stray execution hits `udf #0` and faults
+        // into the sync handler instead of running the stubs below.
+        ".balign 2048, 0",
+        ".macro EXC_HANDLER label, kind",
+        "\\label:",
+        "sub sp, sp, #304",
+        "stp x0, x1, [sp, #0]",
+        "stp x2, x3, [sp, #16]",
+        "stp x4, x5, [sp, #32]",
+        "stp x6, x7, [sp, #48]",
+        "stp x8, x9, [sp, #64]",
+        "stp x10, x11, [sp, #80]",
+        "stp x12, x13, [sp, #96]",
+        "stp x14, x15, [sp, #112]",
+        "stp x16, x17, [sp, #128]",
+        "stp x18, x19, [sp, #144]",
+        "stp x20, x21, [sp, #160]",
+        "stp x22, x23, [sp, #176]",
+        "stp x24, x25, [sp, #192]",
+        "stp x26, x27, [sp, #208]",
+        "stp x28, x29, [sp, #224]",
+        "str x30, [sp, #240]",
+        "add x16, sp, #304",
+        "str x16, [sp, #248]",
+        "mrs x17, elr_el1",
+        "str x17, [sp, #256]",
+        "mrs x18, spsr_el1",
+        "str x18, [sp, #264]",
+        "mrs x19, esr_el1",
+        "str x19, [sp, #272]",
+        "mrs x20, far_el1",
+        "str x20, [sp, #280]",
+        "mov x21, #\\kind",
+        "str x21, [sp, #288]",
+        "mov x0, sp",
+        "bl exception_common",
+        "b hang",
+        ".endm",
+        "EXC_HANDLER exc_sync, 0",
+        "EXC_HANDLER exc_irq, 1",
+        "EXC_HANDLER exc_fiq, 2",
+        "EXC_HANDLER exc_serror, 3",
+        "hang:",
+        "b hang",
+    );
+}
+
+/// Format the dump the stubs captured, write it to serial, and halt the CPU.
+///
+/// # Safety
+/// `frame` must point to the [`ExceptionFrame`] the vector-table stubs push
+/// on the current CPU stack; the stub contract guarantees its layout and
+/// lifetime for the duration of this (never-returning) call.
+#[cfg(target_arch = "aarch64")]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn exception_common(frame: *const ExceptionFrame) -> ! {
+    // SAFETY: the stub passes a pointer to its own freshly pushed frame,
+    // valid and readable for the whole call.
+    let frame = unsafe { &*frame };
+    let mut buf = [0u8; 1024];
+    let msg = format_exception(&mut buf, frame);
+    serial_write(msg);
+    crate::halt()
+}
+
+/// Installs the vector table into `VBAR_EL1`; must run once before interrupts
+/// are enabled so deliveries land in the capture stubs.
+#[cfg(target_arch = "aarch64")]
+pub fn init() {
+    // SAFETY: `exception_vector_table` comes from the naked fn in this module
+    // and is 2048-byte aligned (ARM DDI 0487, VBAR_EL1); the write is legal at
+    // EL1 and at EL2+VHE, where the register redirects to VBAR_EL2.
+    unsafe {
+        core::arch::asm!(
+            "msr vbar_el1, {base}",
+            base = in(reg) exception_vector_table as *const () as usize,
+            options(nostack, preserves_flags),
+        );
+    }
+    let vbar: u64;
+    // SAFETY: `mrs vbar_el1` reads back the value just installed.
+    unsafe {
+        core::arch::asm!(
+            "mrs {vbar}, vbar_el1",
+            vbar = out(reg) vbar,
+            options(nomem, nostack, preserves_flags),
+        );
+    }
+    debug_assert_eq!(vbar % 2048, 0);
+}
+
+// ---------------------------------------------------------------------------
+// IrqGuard: RAII interrupt masking via RFLAGS.IF (x86_64) or DAIF.I (aarch64).
+// ---------------------------------------------------------------------------
+
+/// RAII guard that saves the interrupt-mask state on creation and restores it
 /// on drop. Use [`IrqGuard::disable`] to mask interrupts for a critical
 /// section; interrupts are unmasked when the guard goes out of scope.
 ///
-/// `disable()` and the `Drop` impl use `cli`/`popfq` which are ring-0 only,
-/// so they are gated to `target_os = "none"`.
+/// `disable()` and the `Drop` impl use ring-0/exception-mask instructions, so
+/// they are gated to `target_os = "none"`.
 pub struct IrqGuard {
-    rflags: u64,
+    flags: u64,
 }
 
-#[cfg(target_os = "none")]
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 impl IrqGuard {
     /// Saves RFLAGS and clears IF (bit 9) to disable maskable interrupts.
     ///
@@ -245,28 +501,75 @@ impl IrqGuard {
             );
         }
         compiler_fence(Ordering::SeqCst);
-        IrqGuard { rflags }
+        IrqGuard { flags: rflags }
     }
 }
 
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+impl IrqGuard {
+    /// Saves DAIF and masks IRQs by setting the I bit (bit 7).
+    ///
+    /// Returns a guard that restores the original DAIF on drop.
+    pub fn disable() -> Self {
+        let daif: u64;
+        // SAFETY: `mrs daif` reads the whole exception-mask register;
+        // `msr daifset, #1` sets only the IRQ mask bit I (ARM DDI 0487).
+        unsafe {
+            core::arch::asm!(
+                "mrs {daif}, daif",
+                "msr daifset, #1",
+                daif = out(reg) daif,
+                options(nostack, preserves_flags),
+            );
+        }
+        compiler_fence(Ordering::SeqCst);
+        IrqGuard { flags: daif }
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
 impl IrqGuard {
     /// Returns whether interrupts were enabled before `disable()` was called.
     pub fn was_enabled(&self) -> bool {
-        (self.rflags & (1 << 9)) != 0
+        (self.flags & (1 << 9)) != 0
     }
 }
 
-#[cfg(target_os = "none")]
+#[cfg(target_arch = "aarch64")]
+impl IrqGuard {
+    /// Returns whether interrupts were enabled before `disable()` was called.
+    pub fn was_enabled(&self) -> bool {
+        (self.flags & (1 << 7)) == 0
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "x86_64"))]
 impl Drop for IrqGuard {
     fn drop(&mut self) {
         compiler_fence(Ordering::SeqCst);
-        // SAFETY: `push {rflags}` / `popfq` restores the exact RFLAGS saved
+        // SAFETY: `push {flags}` / `popfq` restores the exact RFLAGS saved
         // by `disable()`, re-enabling interrupts if they were enabled before.
         unsafe {
             core::arch::asm!(
-                "push {rflags}",
+                "push {flags}",
                 "popfq",
-                rflags = in(reg) self.rflags,
+                flags = in(reg) self.flags,
+                options(nostack, preserves_flags),
+            );
+        }
+    }
+}
+
+#[cfg(all(target_os = "none", target_arch = "aarch64"))]
+impl Drop for IrqGuard {
+    fn drop(&mut self) {
+        compiler_fence(Ordering::SeqCst);
+        // SAFETY: `msr daif` restores the exact DAIF saved by `disable()`,
+        // re-enabling interrupts if they were enabled before.
+        unsafe {
+            core::arch::asm!(
+                "msr daif, {flags}",
+                flags = in(reg) self.flags,
                 options(nostack, preserves_flags),
             );
         }
@@ -278,9 +581,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exception_frame_size_and_align() {
-        // 14 u64 fields = 112 bytes, 8-byte aligned.
+    fn x86_64_frame_fits_the_stub_layout() {
         assert_eq!(core::mem::size_of::<ExceptionFrame>(), 112);
+        assert_eq!(core::mem::align_of::<ExceptionFrame>(), 8);
+    }
+
+    #[test]
+    fn aarch64_frame_fits_the_stub_layout() {
+        assert_eq!(core::mem::size_of::<ExceptionFrame>(), 296);
         assert_eq!(core::mem::align_of::<ExceptionFrame>(), 8);
     }
 }
