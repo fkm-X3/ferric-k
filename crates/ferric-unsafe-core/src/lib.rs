@@ -34,6 +34,9 @@ pub mod interrupt;
 // pieces are aarch64-only.
 #[cfg(any(target_arch = "aarch64", test))]
 pub mod gictimer;
+// Input funnel compiled everywhere so the console can call it; device
+// branches inside select the architecture.
+pub mod input;
 // PIT + 8259A for x86_64; host-built because the I/O helpers compile there.
 #[cfg(target_arch = "x86_64")]
 pub mod pit;
@@ -41,6 +44,9 @@ pub mod pit;
 pub mod pl011;
 #[cfg(target_arch = "x86_64")]
 pub mod port;
+// PS/2 keyboard is x86_64-only and touches real ports, so no host build.
+#[cfg(all(target_arch = "x86_64", not(test)))]
+pub mod ps2;
 pub mod qemu;
 #[cfg(target_arch = "x86_64")]
 pub mod serial;
@@ -113,6 +119,9 @@ pub fn boot() -> ! {
 
             crate::pit::init();
             crate::time::init_tsc(crate::limine::tsc_frequency());
+            if !crate::ps2::init() {
+                qemu::debug_exit(qemu::STATUS_KEYBOARD_FAULT);
+            }
             interrupt::revert_to_pic_mode();
             interrupt::enable();
 

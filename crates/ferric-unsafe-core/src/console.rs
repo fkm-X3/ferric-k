@@ -7,7 +7,7 @@
 use crate::sync::Spinlock;
 use core::fmt;
 use ferric_api::Rgb;
-use ferric_safe_core::{Cell, Font, TextGrid};
+use ferric_safe_core::{Cell, Font, Key, KeyEvent, TextGrid};
 
 const FONT_DATA: &[u8] = include_bytes!("../../../fonts/zap-light16.psf");
 
@@ -99,6 +99,24 @@ impl Console {
         }
         self.cursor_row = grid.cursor_row();
         self.cursor_col = grid.cursor_col();
+    }
+
+    /// Echoes one key event to the grid, rendering immediately so each
+    /// keystroke shows; returns true when something printable was drawn.
+    fn echo_key(&mut self, event: KeyEvent) -> bool {
+        let mut buf = [0u8; 4];
+        let text = match event {
+            KeyEvent::Press(Key::Char(c)) if c.is_ascii_graphic() || c == ' ' => {
+                Some::<&str>(c.encode_utf8(&mut buf))
+            }
+            KeyEvent::Press(Key::Enter) => Some("\n"),
+            _ => None,
+        };
+        let Some(text) = text else { return false };
+        self.put_text(text);
+        crate::framebuffer::with_framebuffer(|fb| self.render(fb));
+        mirror_to_serial(text);
+        true
     }
 
     /// Rebuilds the cell grid from scratch in crash colors: clears to `bg`,
@@ -212,7 +230,11 @@ fn soak_timer() -> ! {
     let source = crate::time::time_source();
     let start = source.uptime_ns();
     let mut last_render = start;
+    let mut echoed = false;
     loop {
+        if let Some(event) = crate::input::next_key() {
+            echoed |= CONSOLE.lock().echo_key(event);
+        }
         let now = source.uptime_ns();
         if now.saturating_sub(last_render) >= RENDER_PERIOD_NS {
             last_render = now;
@@ -222,10 +244,16 @@ fn soak_timer() -> ! {
         }
         if now.saturating_sub(start) >= SOAK_DURATION_NS {
             println!("UPTIME OK");
+            let status = if echoed {
+                println!("INPUT OK");
+                crate::qemu::STATUS_INPUT_ECHO
+            } else {
+                crate::qemu::STATUS_TIMER_SOAK
+            };
             #[cfg(target_arch = "x86_64")]
-            crate::qemu::debug_exit(crate::qemu::STATUS_TIMER_SOAK);
+            crate::qemu::debug_exit(status);
             #[cfg(target_arch = "aarch64")]
-            crate::qemu::semihosting_exit(crate::qemu::STATUS_TIMER_SOAK);
+            crate::qemu::semihosting_exit(status);
         }
     }
 }

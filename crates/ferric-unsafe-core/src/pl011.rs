@@ -29,6 +29,7 @@ const REG_ICR: usize = 0x044;
 
 // Flag register bits (ARM DDI 0183G, FR).
 const FR_BUSY: u32 = 1 << 3;
+const FR_RXFE: u32 = 1 << 4;
 const FR_TXFF: u32 = 1 << 5;
 
 // Line control: FIFO enable; 8-bit word length (ARM DDI 0183G, LCR_H).
@@ -97,6 +98,19 @@ impl Pl011Uart {
             core::hint::spin_loop();
         }
         self.dr.write(byte as u32);
+    }
+
+    /// One received byte, or `None` when the RX FIFO is empty.
+    pub fn poll_byte(&mut self) -> Option<u8> {
+        if (self.fr.read() & FR_RXFE) != 0 {
+            return None;
+        }
+        Some((self.dr.read() & 0xFF) as u8)
+    }
+
+    /// One key event from the RX FIFO, decoded as terminal bytes.
+    pub fn poll_key(&mut self) -> Option<ferric_api::KeyEvent> {
+        ferric_safe_core::terminal_byte_to_key(self.poll_byte()?)
     }
 }
 
@@ -178,6 +192,7 @@ mod tests {
     #[test]
     fn constants_match_trm_bit_definitions() {
         assert_eq!(FR_BUSY, 0x08);
+        assert_eq!(FR_RXFE, 0x10);
         assert_eq!(FR_TXFF, 0x20);
         assert_eq!(LCR_H_FEN | LCR_H_WLEN_8, 0x70);
         assert_eq!(CR_UARTEN | CR_TXE | CR_RXE, 0x301);
@@ -218,5 +233,52 @@ mod tests {
 
         uart.write_str("a\n");
         assert_eq!(block.regs[FakeBlock::DR], b'\n' as u32);
+    }
+
+    #[test]
+    fn poll_byte_returns_null_when_the_rx_fifo_is_empty() {
+        let mut block = FakeBlock {
+            regs: [0; (REG_ICR / 4) + 1],
+        };
+
+        // SAFETY: same stand-in storage as the init test.
+        let mut uart = Pl011Uart::new(&mut block as *mut FakeBlock as usize);
+        block.regs[FakeBlock::FR] = FR_RXFE; // RX empty
+
+        assert_eq!(uart.poll_byte(), None);
+        assert_eq!(block.regs[FakeBlock::FR], FR_RXFE); // polling didn't touch FR
+    }
+
+    #[test]
+    fn poll_byte_reads_the_low_byte_of_dr() {
+        let mut block = FakeBlock {
+            regs: [0; (REG_ICR / 4) + 1],
+        };
+
+        // SAFETY: same stand-in storage as the init test.
+        let mut uart = Pl011Uart::new(&mut block as *mut FakeBlock as usize);
+        block.regs[FakeBlock::FR] = 0; // data waiting
+        block.regs[FakeBlock::DR] = 0x61 | (0xDEAD << 8); // junk above bit 8
+
+        assert_eq!(uart.poll_byte(), Some(b'a'));
+        assert_eq!(block.regs[FakeBlock::DR] & 0xFF, 0x61); // polling didn't touch DR
+    }
+
+    #[test]
+    fn poll_key_decodes_terminal_bytes() {
+        let mut block = FakeBlock {
+            regs: [0; (REG_ICR / 4) + 1],
+        };
+
+        // SAFETY: same stand-in storage as the init test.
+        let mut uart = Pl011Uart::new(&mut block as *mut FakeBlock as usize);
+        block.regs[FakeBlock::FR] = 0;
+        block.regs[FakeBlock::DR] = 0x0D; // carriage return
+
+        assert_eq!(
+            uart.poll_key(),
+            Some(ferric_api::KeyEvent::Press(ferric_api::Key::Enter))
+        );
+        assert_eq!(block.regs[FakeBlock::DR] & 0xFF, 0x0D); // polling didn't touch DR
     }
 }

@@ -7,6 +7,7 @@ mod exception_demo;
 mod image;
 mod panic_demo;
 mod platform;
+mod qmp;
 mod runner;
 mod rustup;
 mod steps;

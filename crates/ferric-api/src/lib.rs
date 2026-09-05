@@ -1,6 +1,6 @@
-//! Arch-neutral traits (`TextSink`, `TimeSource`, ...) and shared data types
-//! forming the boundary between safe logic and hardware implementations;
-//! implementors live in `ferric-unsafe-core`.
+//! Arch-neutral traits (`TextSink`, `TimeSource`, `InputDevice`, ...) and
+//! shared data types forming the boundary between safe logic and hardware
+//! implementations; implementors live in `ferric-unsafe-core`.
 #![no_std]
 #![forbid(unsafe_code)]
 
@@ -16,6 +16,49 @@ pub trait TextSink {
 pub trait TimeSource {
     /// Elapsed time since the counter started, in whole nanoseconds.
     fn uptime_ns(&self) -> u64;
+}
+
+/// A logical key, independent of scan code set or keyboard layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Key {
+    Char(char),
+    Enter,
+    Tab,
+    Backspace,
+    Escape,
+    Up,
+    Down,
+    Left,
+    Right,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    Insert,
+    Delete,
+    LeftShift,
+    RightShift,
+    LeftControl,
+    RightControl,
+    LeftAlt,
+    RightAlt,
+    CapsLock,
+    F(u8),
+    /// A make/break code no layout maps.
+    Unknown(u8),
+}
+
+/// A key was pressed or released, reported by an [`InputDevice`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KeyEvent {
+    Press(Key),
+    Release(Key),
+}
+
+/// A polling input source: each call drains at most one event from the
+/// device's buffer, returning `None` when it is empty.
+pub trait InputDevice {
+    fn poll(&mut self) -> Option<KeyEvent>;
 }
 
 /// An 8-bit-per-channel color, independent of a surface's pixel layout.

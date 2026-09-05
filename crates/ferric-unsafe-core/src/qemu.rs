@@ -41,6 +41,15 @@ pub const STATUS_EXCEPTION_DEMO: u8 = 0x60;
 /// aarch64.
 pub const STATUS_TIMER_SOAK: u8 = 0x70;
 
+/// x86_64 PS/2 keyboard global refused to install; QEMU exits with code
+/// `(0x80 << 1) | 1`.
+pub const STATUS_KEYBOARD_FAULT: u8 = 0x80;
+
+/// A key echoed during the timer soak proved the input path end to end;
+/// QEMU exits with code `(0x81 << 1) | 1` on x86_64 and `0x81` raw on
+/// aarch64.
+pub const STATUS_INPUT_ECHO: u8 = 0x81;
+
 /// Exit code QEMU reports for a status byte: `(status << 1) | 1`. Always
 /// odd, so crash/reset exits can never collide with a kernel-reported status.
 #[must_use]
@@ -121,6 +130,8 @@ mod tests {
             STATUS_FRAMEBUFFER_FAULT,
             STATUS_EXCEPTION_DEMO,
             STATUS_TIMER_SOAK,
+            STATUS_KEYBOARD_FAULT,
+            STATUS_INPUT_ECHO,
         ];
         for status in statuses {
             assert_eq!(qemu_exit_code(status) % 2, 1);
@@ -128,6 +139,7 @@ mod tests {
         assert_eq!(qemu_exit_code(STATUS_UART_FAULT), 97);
         assert_eq!(qemu_exit_code(STATUS_EXCEPTION_DEMO), 193);
         assert_eq!(qemu_exit_code(STATUS_TIMER_SOAK), 225);
+        assert_eq!(qemu_exit_code(STATUS_INPUT_ECHO), 259);
         for i in 0..statuses.len() {
             for j in (i + 1)..statuses.len() {
                 assert_ne!(qemu_exit_code(statuses[i]), qemu_exit_code(statuses[j]));
@@ -157,6 +169,7 @@ mod tests {
         assert_eq!(semihosting_exit_code(STATUS_UART_FAULT), 48);
         assert_eq!(semihosting_exit_code(STATUS_EXCEPTION_DEMO), 96);
         assert_eq!(semihosting_exit_code(STATUS_TIMER_SOAK), 112);
+        assert_eq!(semihosting_exit_code(STATUS_INPUT_ECHO), 129);
         assert_eq!(semihosting_exit_code(u8::MAX), 255);
     }
 }
