@@ -4,6 +4,7 @@
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 
+pub mod clock_app;
 pub mod font;
 pub mod grid;
 pub mod line_editor;

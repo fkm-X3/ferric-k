@@ -284,6 +284,33 @@ impl Console {
     }
 }
 
+/// Restores the console behind a moved window: fills `(x, y, w, h)` with the
+/// console background (so the strip below the last grid row is clean too) and
+/// re-blits every cell intersecting it. Used by the clock app.
+pub(crate) fn repaint_rect(x: u32, y: u32, w: u32, h: u32) {
+    let console = CONSOLE.lock();
+    if console.cols == 0 || console.rows == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let bg = console.bg;
+    let font = Font::parse(FONT_DATA).expect("font parse failed");
+    let (cw, ch) = (font.width(), font.height());
+    let row0 = (u64::from(y) / u64::from(ch)).min(u64::from(console.rows - 1));
+    let col0 = (u64::from(x) / u64::from(cw)).min(u64::from(console.cols - 1));
+    let row1 = (u64::from(y).saturating_add(u64::from(h)).saturating_sub(1) / u64::from(ch))
+        .min(u64::from(console.rows - 1));
+    let col1 = (u64::from(x).saturating_add(u64::from(w)).saturating_sub(1) / u64::from(cw))
+        .min(u64::from(console.cols - 1));
+    crate::framebuffer::with_framebuffer(|fb| {
+        let _ = fb.fill_rect(x, y, w, h, bg);
+        for row in row0..=row1 {
+            for col in col0..=col1 {
+                console.blit_cell(fb, &font, row as u32, col as u32);
+            }
+        }
+    });
+}
+
 fn mirror_to_serial(s: &str) {
     #[cfg(target_arch = "x86_64")]
     crate::serial::with_serial(|serial| ferric_api::TextSink::write_str(serial, s));
@@ -395,6 +422,7 @@ fn run_command(line: &[char]) {
             println!("  uptime   show time since boot");
             println!("  arch     show the CPU architecture");
             println!("  panic    panic the kernel (test hook)");
+            println!("  clock    open the graphical clock window");
             println!("  halt     power off the machine");
         }
         Command::Clear => CONSOLE.lock().clear_screen(),
@@ -415,6 +443,12 @@ fn run_command(line: &[char]) {
             println!("aarch64");
         }
         Command::Panic => panic!("panic at user request (shell command)"),
+        Command::Clock => {
+            crate::app::run_clock();
+            // Repaint the console over whatever the window left behind; the
+            // prompt is redrawn by the shell loop's `new_prompt`.
+            CONSOLE.lock().render_now();
+        }
         Command::Halt => {
             println!("HALT");
             exit_qemu(crate::qemu::STATUS_SHELL_HALT);

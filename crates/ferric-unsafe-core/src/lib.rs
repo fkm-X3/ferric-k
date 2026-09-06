@@ -7,7 +7,10 @@
 // linkage backs the weak mem* shims in `mem.rs`.
 #![cfg_attr(not(test), feature(linkage))]
 
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub mod app;
 pub mod arch;
+pub mod clock;
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod console;
 pub mod framebuffer;

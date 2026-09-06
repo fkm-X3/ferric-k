@@ -7,6 +7,12 @@ description = "Safe platform-independent kernel logic: console, font parsing, lo
 
 [dependencies]
 ferric-api.workspace = true
+# no_std embedded drawing for the clock app's windowed GUI; the only
+# non-in-tree runtime dependencies, made deliberately for this feature.
+embedded-graphics = { version = "0.8", default-features = false }
+# Already a hard dependency of embedded-graphics; made direct so the clock
+# hands can use f32 sin/cos without reach-through.
+micromath = "2"
 
 [lints]
 workspace = true

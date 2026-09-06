@@ -18,6 +18,32 @@ pub trait TimeSource {
     fn uptime_ns(&self) -> u64;
 }
 
+/// Hours/minutes/seconds read from the kernel clock, as a broken-down
+/// time-of-day. Seconds is a whole number; fractions of a second are dropped.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TimeOfDay {
+    pub hours: u8,
+    pub minutes: u8,
+    pub seconds: u8,
+}
+
+impl TimeOfDay {
+    pub const fn new(hours: u8, minutes: u8, seconds: u8) -> Self {
+        Self {
+            hours,
+            minutes,
+            seconds,
+        }
+    }
+}
+
+/// A wall-clock-style time source, distinct from the monotonic [`TimeSource`].
+/// Implementors translate a monotonic uptime into a human-readable local
+/// time-of-day (Ferric-K treats boot as 00:00:00 until an RTC exists).
+pub trait Clock {
+    fn local_time(&self) -> TimeOfDay;
+}
+
 /// A logical key, independent of scan code set or keyboard layout.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
