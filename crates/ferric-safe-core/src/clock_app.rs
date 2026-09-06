@@ -4,7 +4,7 @@
 
 use embedded_graphics::{
     geometry::{Point, Size},
-    mono_font::{MonoTextStyle, ascii::FONT_6X10},
+    mono_font::{ascii::FONT_6X10, MonoTextStyle},
     pixelcolor::Rgb888,
     prelude::*,
     primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle},
@@ -18,18 +18,26 @@ use micromath::F32Ext;
 
 pub const WIDTH: u32 = 220;
 pub const HEIGHT: u32 = 180;
+const TITLE_BAR_HEIGHT: u32 = 20;
+
 const FACE_RADIUS: u32 = 42;
 const HOUR_HAND: u32 = 22;
 const MINUTE_HAND: u32 = 30;
 const SECOND_HAND: u32 = 36;
-const WINDOW_BG: Rgb888 = Rgb888::new(0x10, 0x12, 0x24);
-const WINDOW_BORDER: Rgb888 = Rgb888::new(0x88, 0x88, 0x99);
-const FACE_BG: Rgb888 = Rgb888::new(0x0A, 0x0C, 0x1A);
-const FACE_RING: Rgb888 = Rgb888::new(0x60, 0x60, 0x70);
-const TICK: Rgb888 = Rgb888::new(0xC0, 0xC0, 0xD0);
-const HAND: Rgb888 = Rgb888::new(0xEE, 0xEE, 0xFF);
-const SECOND: Rgb888 = Rgb888::new(0xFF, 0x30, 0x30);
-const DIGIT: Rgb888 = Rgb888::new(0xFF, 0xFF, 0xFF);
+
+const TITLE_BG: Rgb888 = Rgb888::new(0x28, 0x2A, 0x36);
+const TITLE_TEXT: Rgb888 = Rgb888::new(0xF8, 0xF8, 0xF2);
+const CLOSE_BTN_BG: Rgb888 = Rgb888::new(0xFF, 0x55, 0x55);
+const CLOSE_BTN_TEXT: Rgb888 = Rgb888::new(0x28, 0x2A, 0x36);
+
+const WINDOW_BG: Rgb888 = Rgb888::new(0x1E, 0x20, 0x29);
+const WINDOW_BORDER: Rgb888 = Rgb888::new(0x44, 0x47, 0x5A);
+const FACE_BG: Rgb888 = Rgb888::new(0x15, 0x16, 0x1E);
+const FACE_RING: Rgb888 = Rgb888::new(0x62, 0x72, 0xA4);
+const TICK: Rgb888 = Rgb888::new(0x8B, 0xEB, 0xFE);
+const HAND: Rgb888 = Rgb888::new(0xF8, 0xF8, 0xF2);
+const SECOND: Rgb888 = Rgb888::new(0xFF, 0x79, 0xC6);
+const DIGIT: Rgb888 = Rgb888::new(0x50, 0xFA, 0x7B);
 
 /// A rectangular window holding the analog + digital clock; drawn into any
 /// `DrawTarget`, moved by the shell input loop.
@@ -65,21 +73,68 @@ impl ClockWindow {
         self.y = (self.y + dy).max(0).min(max_y);
     }
 
-    /// Paints the window: rounded border, analog face, hands, and the digital
-    /// readout for `time`.
+    /// Paints the window: title bar, rounded border, analog face, hands, 
+    /// and the digital readout for `time`.
     pub fn draw<D>(&self, target: &mut D, time: TimeOfDay) -> Result<(), D::Error>
     where
         D: DrawTarget<Color = Rgb888>,
     {
         let origin = Point::new(self.x, self.y);
-        let center = origin + Point::new((WIDTH as i32) / 2, (HEIGHT as i32) / 2);
+        // Center the clock face within the window's main body, excluding the title bar
+        let center = origin + Point::new(
+            (WIDTH as i32) / 2, 
+            (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2
+        );
 
+        // Main window background
         Rectangle::new(origin, Size::new(WIDTH, HEIGHT))
             .into_styled(PrimitiveStyle::with_fill(WINDOW_BG))
             .draw(target)?;
+
+        // Title bar background
+        Rectangle::new(origin, Size::new(WIDTH, TITLE_BAR_HEIGHT))
+            .into_styled(PrimitiveStyle::with_fill(TITLE_BG))
+            .draw(target)?;
+
+        // Title text
+        Text::with_baseline(
+            "Clock",
+            origin + Point::new(8, 5),
+            MonoTextStyle::new(&FONT_6X10, TITLE_TEXT),
+            embedded_graphics::text::Baseline::Top,
+        )
+        .draw(target)?;
+
+        // Close button background (top-right corner)
+        let close_btn_x = (WIDTH - TITLE_BAR_HEIGHT) as i32;
+        Rectangle::new(
+            origin + Point::new(close_btn_x, 0),
+            Size::new(TITLE_BAR_HEIGHT, TITLE_BAR_HEIGHT),
+        )
+        .into_styled(PrimitiveStyle::with_fill(CLOSE_BTN_BG))
+        .draw(target)?;
+
+        // Close button 'X' label (centered visually)
+        Text::with_baseline(
+            "X",
+            origin + Point::new(close_btn_x + 7, 5),
+            MonoTextStyle::new(&FONT_6X10, CLOSE_BTN_TEXT),
+            embedded_graphics::text::Baseline::Top,
+        )
+        .draw(target)?;
+
+        // Window border outlining the whole app
         Rectangle::new(origin, Size::new(WIDTH, HEIGHT))
             .into_styled(PrimitiveStyle::with_stroke(WINDOW_BORDER, 1))
             .draw(target)?;
+
+        // Title bar separator line
+        Line::new(
+            origin + Point::new(0, TITLE_BAR_HEIGHT as i32),
+            origin + Point::new((WIDTH - 1) as i32, TITLE_BAR_HEIGHT as i32),
+        )
+        .into_styled(PrimitiveStyle::with_stroke(WINDOW_BORDER, 1))
+        .draw(target)?;
 
         let face_tl = center - Point::new(FACE_RADIUS as i32, FACE_RADIUS as i32);
         Circle::new(face_tl, FACE_RADIUS * 2)
@@ -231,7 +286,8 @@ mod tests {
         window.draw(&mut target, TimeOfDay::new(0, 0, 0)).unwrap();
 
         let cx = window.x + (WIDTH as i32) / 2;
-        let cy = window.y + (HEIGHT as i32) / 2;
+        let cy = window.y + (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2;
+        
         // Second hand is on top, pointing straight up, and the center cap
         // covers the hand origins.
         assert_eq!(target.get(cx as u32, cy as u32 - SECOND_HAND), SECOND);
@@ -247,14 +303,19 @@ mod tests {
 
         // Border ring.
         assert_eq!(target.get(window.x as u32, window.y as u32), WINDOW_BORDER);
-        // Interior corner is window fill (outside the analog face).
+        // Interior corner is now title bar fill.
         assert_eq!(
             target.get(window.x as u32 + 5, window.y as u32 + 5),
+            TITLE_BG
+        );
+        // Window body background is strictly below the title bar.
+        assert_eq!(
+            target.get(window.x as u32 + 5, window.y as u32 + TITLE_BAR_HEIGHT + 5),
             WINDOW_BG
         );
         // A point inside the face that no hand or tick reaches stays face fill.
         let cx = window.x + (WIDTH as i32) / 2;
-        let cy = window.y + (HEIGHT as i32) / 2;
+        let cy = window.y + (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2;
         assert_eq!(target.get((cx + 20) as u32, (cy + 20) as u32), FACE_BG);
         // Pixels outside the window are untouched.
         assert_eq!(
@@ -273,9 +334,12 @@ mod tests {
             .unwrap();
 
         let cx = window.x + (WIDTH as i32) / 2;
-        let text_top = window.y + (HEIGHT as i32) / 2 + FACE_RADIUS as i32 + 12;
+        let cy = window.y + (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2;
+        
+        let text_top = cy + FACE_RADIUS as i32 + 12;
         let text_left = cx - (8 * FONT_6X10.character_size.width as i32) / 2;
         let mut lit = 0;
+        
         for y in text_top..text_top + FONT_6X10.character_size.height as i32 {
             for x in text_left..text_left + 48 {
                 if target.get(x as u32, y as u32) == DIGIT {
