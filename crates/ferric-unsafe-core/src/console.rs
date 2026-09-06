@@ -129,33 +129,60 @@ impl Console {
 
     /// Repaints the shell's in-progress line, blanking the cells it drew
     /// before. Chars beyond the grid are drawn off-screen; the editor buffer
-    /// still carries them for the command parser.
+    /// still carries them for the command parser. Only the edited range is
+    /// re-blitted unless a scroll shifted the whole frame.
     fn set_edit_line(&mut self, chars: &[char]) {
         if self.cols == 0 || self.rows == 0 {
             return;
         }
-        let mut grid = TextGrid::new(&mut self.cells[..], self.cols, self.rows)
-            .expect("console geometry must fit the cell buffer");
-        if self.edited_cells > 0 {
-            let blank = Cell::blank(self.fg, self.bg);
-            for off in 0..self.edited_cells {
-                let index = self.edit_row * self.cols + self.edit_col + off;
-                if index >= self.rows * self.cols {
-                    break;
+        let origin = (self.edit_row * self.cols + self.edit_col) as usize;
+        let old_cells = self.edited_cells as usize;
+        if chars.is_empty() && old_cells == 0 {
+            return;
+        }
+        let total = (self.rows * self.cols) as usize;
+        let (end, scrolled, cursor_row, cursor_col) = {
+            let mut grid = TextGrid::new(&mut self.cells[..], self.cols, self.rows)
+                .expect("console geometry must fit the cell buffer");
+            if old_cells > 0 {
+                let blank = Cell::blank(self.fg, self.bg);
+                for off in 0..old_cells {
+                    let index = origin + off;
+                    if index >= total {
+                        break;
+                    }
+                    grid.set_cell(
+                        (index / self.cols as usize) as u32,
+                        (index % self.cols as usize) as u32,
+                        blank,
+                    );
                 }
-                grid.set_cell(index / self.cols, index % self.cols, blank);
             }
-        }
-        grid.set_cursor(self.edit_row, self.edit_col);
-        let (fg, bg) = (self.fg, self.bg);
-        for &c in chars {
-            grid.put(c, fg, bg);
-        }
-        let end = grid.cursor_row() * self.cols + grid.cursor_col();
-        self.edited_cells = end.saturating_sub(self.edit_row * self.cols + self.edit_col);
-        self.cursor_row = grid.cursor_row();
-        self.cursor_col = grid.cursor_col();
-        crate::framebuffer::with_framebuffer(|fb| self.render(fb));
+            grid.set_cursor(self.edit_row, self.edit_col);
+            let (fg, bg) = (self.fg, self.bg);
+            for &c in chars {
+                grid.put(c, fg, bg);
+            }
+            (
+                (grid.cursor_row() * self.cols + grid.cursor_col()) as usize,
+                grid.scroll_count(),
+                grid.cursor_row(),
+                grid.cursor_col(),
+            )
+        };
+        self.edited_cells = end.saturating_sub(origin) as u32;
+        self.cursor_row = cursor_row;
+        self.cursor_col = cursor_col;
+        crate::framebuffer::with_framebuffer(|fb| {
+            if scrolled > 0 {
+                self.edit_row = self.edit_row.saturating_sub(scrolled);
+                self.render(fb);
+            } else {
+                let old_end = origin + old_cells;
+                let new_end = origin + self.edited_cells as usize;
+                self.render_range(fb, origin, old_end.max(new_end).saturating_sub(1));
+            }
+        });
     }
 
     /// Closes the current edit and returns to ordinary write mode.
@@ -202,22 +229,56 @@ impl Console {
     }
 
     fn render(&self, fb: &mut crate::framebuffer::FrameBuffer) {
+        if self.cols == 0 || self.rows == 0 {
+            return;
+        }
         let font = Font::parse(FONT_DATA).expect("font parse failed");
-        let (cw, ch) = (font.width(), font.height());
         for row in 0..self.rows {
             for col in 0..self.cols {
-                let cell = self.cells[(row * self.cols + col) as usize];
-                let glyph = font.glyph_index_for(cell.glyph).unwrap_or(0);
-                let fg_word = fb.encode(cell.fg);
-                let bg_word = fb.encode(cell.bg);
-                let (px, py) = (col * cw, row * ch);
-                for gy in 0..ch {
-                    for gx in 0..cw {
-                        let set = font.glyph_pixel(glyph, gx, gy).unwrap_or(false);
-                        let word = if set { fg_word } else { bg_word };
-                        let _ = fb.write_word(px + gx, py + gy, word);
-                    }
-                }
+                self.blit_cell(fb, &font, row, col);
+            }
+        }
+    }
+
+    /// Re-blits just the cells in the row-major index range `[from, to]`
+    /// (inclusive, clamped to the grid), so the shell repaints only its edited
+    /// line on each keystroke instead of the whole framebuffer.
+    fn render_range(
+        &self,
+        fb: &mut crate::framebuffer::FrameBuffer,
+        mut from: usize,
+        mut to: usize,
+    ) {
+        if self.cols == 0 || self.rows == 0 {
+            return;
+        }
+        let total = (self.rows * self.cols) as usize;
+        if from >= total || to >= total {
+            from = from.min(total - 1);
+            to = to.min(total - 1);
+        }
+        if from > to {
+            return;
+        }
+        let font = Font::parse(FONT_DATA).expect("font parse failed");
+        let cols = self.cols as usize;
+        for index in from..=to {
+            self.blit_cell(fb, &font, (index / cols) as u32, (index % cols) as u32);
+        }
+    }
+
+    fn blit_cell(&self, fb: &mut crate::framebuffer::FrameBuffer, font: &Font, row: u32, col: u32) {
+        let (cw, ch) = (font.width(), font.height());
+        let cell = self.cells[(row * self.cols + col) as usize];
+        let glyph = font.glyph_index_for(cell.glyph).unwrap_or(0);
+        let fg_word = fb.encode(cell.fg);
+        let bg_word = fb.encode(cell.bg);
+        let (px, py) = (col * cw, row * ch);
+        for gy in 0..ch {
+            for gx in 0..cw {
+                let set = font.glyph_pixel(glyph, gx, gy).unwrap_or(false);
+                let word = if set { fg_word } else { bg_word };
+                let _ = fb.write_word(px + gx, py + gy, word);
             }
         }
     }

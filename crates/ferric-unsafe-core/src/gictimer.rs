@@ -188,11 +188,6 @@ fn arm_timer(delta: u64) {
 mod tests {
     use super::*;
 
-    #[repr(C, align(4))]
-    struct FakeGic {
-        regs: [u32; (GICC_PMR / 4) + 1],
-    }
-
     #[test]
     fn bases_and_offsets_match_the_virt_and_timer_layouts() {
         assert_eq!(GICD_BASE, 0x0800_0000);
@@ -216,22 +211,25 @@ mod tests {
 
     #[test]
     fn program_brings_up_both_halves() {
-        let block = FakeGic {
-            regs: [0; (GICC_PMR / 4) + 1],
-        };
-        // GICD_ISENABLER0 sits at offset 0x100, beyond the 0x14-wide fake;
-        // extend the window on the host behind the handles.
         let mut backing = [0u32; (GICD_ISENABLER0 / 4) + 1];
+        let mut block = [0u32; (GICC_PMR / 4) + 1];
         let dist = backing.as_mut_ptr() as usize;
-        let cpu = block.regs.as_ptr() as usize;
+        let cpu = block.as_mut_ptr() as usize;
 
         // SAFETY: `backing` and `block` outlive the handles; u32 storage.
         let mut gic = GicRegs::at(dist, cpu);
         gic.program();
 
-        assert_eq!(backing[GICD_CTLR / 4], 0b11);
-        assert_eq!(backing[GICD_ISENABLER0 / 4], 1 << IRQ_CNTPNSIRQ);
-        assert_eq!(block.regs[GICC_CTLR / 4], 0b11);
-        assert_eq!(block.regs[GICC_PMR / 4], GICC_PMR_ALL);
+        // Read back through volatile handles so the optimizer cannot reorder
+        // these loads before `program`'s stores; plain array re-reads alias
+        // them and become unreliable once the test is codegen-optimized.
+        let dist_ctlr = Volatile::<u32>::new((dist + GICD_CTLR) as *mut u32);
+        let isenabler0 = Volatile::<u32>::new((dist + GICD_ISENABLER0) as *mut u32);
+        let cpu_ctlr = Volatile::<u32>::new((cpu + GICC_CTLR) as *mut u32);
+        let pmr = Volatile::<u32>::new((cpu + GICC_PMR) as *mut u32);
+        assert_eq!(dist_ctlr.read(), 0b11);
+        assert_eq!(isenabler0.read(), 1 << IRQ_CNTPNSIRQ);
+        assert_eq!(cpu_ctlr.read(), 0b11);
+        assert_eq!(pmr.read(), GICC_PMR_ALL);
     }
 }

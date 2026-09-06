@@ -108,7 +108,9 @@ fn pack(c: Rgb) -> u32 {
 }
 
 /// A rectangular, cursor-tracked console over `&mut [Cell]`. Writing past the
-/// last column wraps; writing past the last row scrolls.
+/// last column wraps; writing past the last row scrolls. Wraps the caller's
+/// cell buffer in place — [`Self::new`] does not clear it; ask for a blank
+/// slate with [`Self::clear`].
 pub struct TextGrid<'a> {
     cells: &'a mut [Cell],
     cols: u32,
@@ -117,11 +119,13 @@ pub struct TextGrid<'a> {
     col: u32,
     default_fg: Rgb,
     default_bg: Rgb,
+    scroll_count: u32,
 }
 
 impl<'a> TextGrid<'a> {
-    /// Wraps `cells` as a `cols`-by-`rows` console. Returns `None` when the
-    /// buffer cannot hold `cols * rows` cells.
+    /// Wraps `cells` as a `cols`-by-`rows` console, leaving existing cell
+    /// contents untouched. Returns `None` when the buffer cannot hold
+    /// `cols * rows` cells.
     pub fn new(cells: &'a mut [Cell], cols: u32, rows: u32) -> Option<Self> {
         let needed = usize::try_from(cols)
             .ok()?
@@ -129,7 +133,7 @@ impl<'a> TextGrid<'a> {
         if cols == 0 || rows == 0 || needed > cells.len() {
             return None;
         }
-        let mut grid = Self {
+        Some(Self {
             cells,
             cols,
             rows,
@@ -137,9 +141,8 @@ impl<'a> TextGrid<'a> {
             col: 0,
             default_fg: Rgb::new(0xC0, 0xC0, 0xC0),
             default_bg: Rgb::new(0, 0, 0),
-        };
-        grid.clear_defaults();
-        Some(grid)
+            scroll_count: 0,
+        })
     }
 
     /// Clears every cell to `' '` in `fg`/`bg` and homes the cursor. Optionally
@@ -150,6 +153,7 @@ impl<'a> TextGrid<'a> {
         self.clear_defaults();
         self.row = 0;
         self.col = 0;
+        self.scroll_count = 0;
     }
 
     fn clear_defaults(&mut self) {
@@ -253,6 +257,13 @@ impl<'a> TextGrid<'a> {
         for cell in self.cells[start..start + cols].iter_mut() {
             *cell = blank;
         }
+        self.scroll_count += 1;
+    }
+
+    /// How many [`Self::scroll_up`] shifts happened since construction or the
+    /// last [`Self::clear`].
+    pub fn scroll_count(&self) -> u32 {
+        self.scroll_count
     }
 }
 
@@ -350,6 +361,43 @@ mod tests {
         assert_eq!(g.cell(1, 2).unwrap().glyph, ' ');
         assert_eq!(g.cursor_row(), 1);
         assert_eq!(g.cursor_col(), 0);
+        assert_eq!(g.scroll_count(), 1);
+    }
+
+    #[test]
+    fn new_preserves_existing_cells() {
+        let mut cells = vec![Cell::blank(BLACK, BLACK); 4];
+        cells[0] = Cell {
+            glyph: 'x',
+            fg: WHITE,
+            bg: BLACK,
+        };
+        let mut g = TextGrid::new(&mut cells, 2, 2).unwrap();
+        assert_eq!(
+            g.cell(0, 0).unwrap(),
+            Cell {
+                glyph: 'x',
+                fg: WHITE,
+                bg: BLACK
+            }
+        );
+        // put overwrites only the cell it writes.
+        g.put('y', WHITE, BLACK);
+        assert_eq!(g.cell(0, 0).unwrap().glyph, 'y');
+        assert_eq!(g.cell(0, 1).unwrap().glyph, ' ');
+    }
+
+    #[test]
+    fn clear_resets_the_scroll_count() {
+        let mut cells = vec![Cell::blank(BLACK, BLACK); 3 * 2];
+        let mut g = TextGrid::new(&mut cells, 3, 2).unwrap();
+        for c in ['a', 'b', 'c', 'd', 'e', 'f'] {
+            g.put(c, WHITE, BLACK);
+        }
+        assert_eq!(g.scroll_count(), 1);
+        g.clear(WHITE, BLACK);
+        assert_eq!(g.scroll_count(), 0);
+        assert_eq!(g.cell(0, 0).unwrap().glyph, ' ');
     }
 
     #[test]

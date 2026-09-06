@@ -67,6 +67,30 @@ struct MachineSpec {
     serial_port: Option<u16>,
 }
 
+/// Returns the fastest accelerator this QEMU binary was built with (`whpx`
+/// under Hyper-V, `hvf` on macOS, `kvm` on Linux), or `None` when only TCG is
+/// available (QEMU's default). Probing is required because QEMU rejects
+/// accelerator *lists* like `whpx:tcg` with "invalid accelerator" rather than
+/// falling back.
+fn detect_accel(qemu: &str) -> Result<Option<String>, String> {
+    let out = std::process::Command::new(qemu)
+        .args(["-accel", "help"])
+        .output()
+        .map_err(|e| format!("probing {qemu} accelerators: {e}"))?;
+    let text = [out.stdout.clone(), out.stderr.clone()].concat();
+    let tokens: Vec<String> = String::from_utf8_lossy(&text)
+        .split(|c: char| c.is_whitespace() || c == ',' || c == ':' || c == '/')
+        .filter(|t| !t.is_empty())
+        .map(str::to_owned)
+        .collect();
+    for want in ["whpx", "hvf", "kvm"] {
+        if tokens.iter().any(|t| t == want) {
+            return Ok(Some(want.to_owned()));
+        }
+    }
+    Ok(None)
+}
+
 /// Builds the QEMU command line; `expected_exit` is only meaningful with
 /// `--smoke`, and the input-injection sockets are only wired in that mode.
 fn machine_spec(
@@ -176,6 +200,14 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
     }
 
     let mut spec = machine_spec(&args, &image_path, repo_root)?;
+
+    // aarch64 guests stay on TCG: no host accel runs cross-architecture guests.
+    if args.arch == "x64"
+        && let Some(accel) = detect_accel(qemu)?
+    {
+        spec.args.push("-accel".into());
+        spec.args.push(accel);
+    }
 
     if !args.smoke {
         steps::note("booting QEMU (interactive; close window or Ctrl-C to stop)");
