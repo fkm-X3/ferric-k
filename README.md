@@ -8,9 +8,11 @@ framebuffer.
 
 ```sh
 cargo xtask bootstrap   # install toolchain + native deps + Limine
-cargo xtask check       # full quality gate (fmt, clippy, build, tests, smoke)
+cargo xtask build       # rebuild both kernel ELFs (x86_64 + aarch64)
+cargo xtask build-image # assemble the dual-arch bootable disk image
 cargo xtask run --arch x64    # boot interactively in QEMU (x86_64)
 cargo xtask run --arch arm64  # boot interactively in QEMU (aarch64)
+cargo xtask clean       # wipe the build cache (target/ and build/)
 ```
 
 ## Commands
@@ -22,10 +24,12 @@ apt/dnf/pacman on Linux).
 | Command | Description |
 |---|---|
 | `cargo xtask bootstrap` | Install the pinned Rust nightly + components, native deps (qemu, mtools, edk2 firmware), and checksum-pinned Limine into `third_party/`. |
+| `cargo xtask build` | Rebuild both kernel ELFs (x86_64 + aarch64) with the kernel-target flags and verify each against the ELF/Limine gates. Use after `clean` before `build-image`. |
 | `cargo xtask build-image` | Assemble the dual-arch bootable FAT16 disk image (`--image-path`, `--size-mb`). |
 | `cargo xtask run` | Boot under QEMU (`--arch x64\|arm64`, `--smoke`, `--image-path`). |
 | `cargo xtask panic-demo` | Build with `panic-on-boot`, boot both arches, assert the red crash panel. |
 | `cargo xtask check` | Full quality gate: fmt → clippy (host + both targets) → build + ELF/Limine gates → host tests (safe-core + unsafe-core) → QEMU smoke boots (x86_64 + aarch64). `--no-smoke` skips the QEMU steps. |
+| `cargo xtask clean` | Remove the build cache: the cargo `target/` dirs and the assembled `build/` images. Run `cargo xtask build` afterward to regenerate the ELFs. |
 
 ## Architecture
 
