@@ -72,7 +72,12 @@ fn build_panic_kernel(repo_root: &Path, target: &str, target_dir: &Path) -> Resu
     Ok(())
 }
 
-fn boot_and_assert_panic(repo_root: &Path, arch: &str, image: &Path, timeout_secs: u64) -> Result<(), String> {
+fn boot_and_assert_panic(
+    repo_root: &Path,
+    arch: &str,
+    image: &Path,
+    timeout_secs: u64,
+) -> Result<(), String> {
     let qemu = if arch == "x64" {
         platform::QEMU_X64
     } else {

@@ -50,6 +50,10 @@ pub const STATUS_KEYBOARD_FAULT: u8 = 0x80;
 /// aarch64.
 pub const STATUS_INPUT_ECHO: u8 = 0x81;
 
+/// The shell's `halt` command powered the machine off cleanly; QEMU exits
+/// with code `(0x82 << 1) | 1` on x86_64 and `0x82` raw on aarch64.
+pub const STATUS_SHELL_HALT: u8 = 0x82;
+
 /// Exit code QEMU reports for a status byte: `(status << 1) | 1`. Always
 /// odd, so crash/reset exits can never collide with a kernel-reported status.
 #[must_use]
@@ -132,6 +136,7 @@ mod tests {
             STATUS_TIMER_SOAK,
             STATUS_KEYBOARD_FAULT,
             STATUS_INPUT_ECHO,
+            STATUS_SHELL_HALT,
         ];
         for status in statuses {
             assert_eq!(qemu_exit_code(status) % 2, 1);
@@ -140,6 +145,7 @@ mod tests {
         assert_eq!(qemu_exit_code(STATUS_EXCEPTION_DEMO), 193);
         assert_eq!(qemu_exit_code(STATUS_TIMER_SOAK), 225);
         assert_eq!(qemu_exit_code(STATUS_INPUT_ECHO), 259);
+        assert_eq!(qemu_exit_code(STATUS_SHELL_HALT), 261);
         for i in 0..statuses.len() {
             for j in (i + 1)..statuses.len() {
                 assert_ne!(qemu_exit_code(statuses[i]), qemu_exit_code(statuses[j]));
@@ -170,6 +176,7 @@ mod tests {
         assert_eq!(semihosting_exit_code(STATUS_EXCEPTION_DEMO), 96);
         assert_eq!(semihosting_exit_code(STATUS_TIMER_SOAK), 112);
         assert_eq!(semihosting_exit_code(STATUS_INPUT_ECHO), 129);
+        assert_eq!(semihosting_exit_code(STATUS_SHELL_HALT), 130);
         assert_eq!(semihosting_exit_code(u8::MAX), 255);
     }
 }

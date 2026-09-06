@@ -32,7 +32,12 @@ pub fn run(repo_root: &Path, args: ImageArgs) -> Result<(), String> {
             "target/aarch64-ferric/debug/ferric-kernel",
         ),
     ];
-    assemble(repo_root, &repo_root.join(&args.image_path), args.size_mb, kernels)
+    assemble(
+        repo_root,
+        &repo_root.join(&args.image_path),
+        args.size_mb,
+        kernels,
+    )
 }
 
 /// Assembles a bootable image from the given `(fat_name, relative_elf_path)`

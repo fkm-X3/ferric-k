@@ -8,31 +8,41 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::Path;
 use std::process::{Child, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
 const BOOT_MARKER: &str = "BOOT OK";
 const FRAMEBUFFER_MARKER: &str = "FRAMEBUFFER OK";
 const CONSOLE_MARKER: &str = "Hello from Ferric-K!";
-const UPTIME_OK_MARKER: &str = "UPTIME OK";
-const INPUT_OK_MARKER: &str = "INPUT OK";
-/// Key the smoke injects on each arch through its native input path.
-const INJECT_KEY: &str = "a";
-/// Serial bytes kept in the reader's rolling window for marker detection.
-const WINDOW_MAX: usize = 64;
+/// Marker the `help` output carries, proving a typed command was dispatched.
+const HELP_RESPONSE_MARKER: &str = "power off";
+/// Marker the shell prints for a command it does not recognize.
+const UNKNOWN_RESPONSE_MARKER: &str = "unknown command";
+/// Marker the `uptime` output begins with.
+const UPTIME_RESPONSE_MARKER: &str = "Uptime:";
+/// Marker the `halt` command prints before powering the machine off.
+const HALT_RESPONSE_MARKER: &str = "HALT";
 
-/// Exit code QEMU reports for a successful input echo. x86_64's isa-debug-exit
-/// value (STATUS_INPUT_ECHO<<1)|1 = 0x103 = 259, but POSIX waitpid truncates
-/// child status to 8 bits, so Linux CI sees 3; Windows reports the full 259.
+/// Command script the smoke drives: each step waits for its marker on serial,
+/// then types the next command (commands carry their own Enter key).
+const SCRIPT: &[(&str, &str)] = &[
+    (CONSOLE_MARKER, "help\r"),
+    (HELP_RESPONSE_MARKER, "xyz\r"),
+    (UNKNOWN_RESPONSE_MARKER, "uptime\r"),
+    (UPTIME_RESPONSE_MARKER, "halt\r"),
+];
+
+/// Exit code QEMU reports for the shell's `halt` command. x86_64's
+/// isa-debug-exit value (STATUS_SHELL_HALT<<1)|1 = 0x105 = 261, but POSIX
+/// waitpid truncates child status to 8 bits, so Linux CI sees 5; Windows
+/// reports the full 261.
 #[cfg(windows)]
-const X64_INPUT_ECHO_EXIT: i32 = (0x81 << 1) | 1;
+const X64_SHELL_HALT_EXIT: i32 = (0x82 << 1) | 1;
 #[cfg(not(windows))]
-const X64_INPUT_ECHO_EXIT: i32 = ((0x81 << 1) | 1) & 0xFF;
+const X64_SHELL_HALT_EXIT: i32 = ((0x82 << 1) | 1) & 0xFF;
 
 /// Raw semihosting pass-through, already < 256, so identity on every platform.
-const ARM64_INPUT_ECHO_EXIT: i32 = 0x81; // STATUS_INPUT_ECHO -> 129
+const ARM64_SHELL_HALT_EXIT: i32 = 0x82; // STATUS_SHELL_HALT -> 130
 
 #[derive(Args)]
 pub struct RunArgs {
@@ -59,7 +69,11 @@ struct MachineSpec {
 
 /// Builds the QEMU command line; `expected_exit` is only meaningful with
 /// `--smoke`, and the input-injection sockets are only wired in that mode.
-fn machine_spec(args: &RunArgs, image_path: &Path, repo_root: &Path) -> Result<MachineSpec, String> {
+fn machine_spec(
+    args: &RunArgs,
+    image_path: &Path,
+    repo_root: &Path,
+) -> Result<MachineSpec, String> {
     if args.arch == "x64" {
         let qmp_port = if args.smoke {
             Some(ephemeral_port()?)
@@ -79,15 +93,14 @@ fn machine_spec(args: &RunArgs, image_path: &Path, repo_root: &Path) -> Result<M
             "stdio".into(),
         ];
         if let Some(port) = qmp_port {
-            cmd.extend(["-qmp".into(), format!("tcp:127.0.0.1:{port},server=on,wait=off")]);
+            cmd.extend([
+                "-qmp".into(),
+                format!("tcp:127.0.0.1:{port},server=on,wait=off"),
+            ]);
         }
         Ok(MachineSpec {
             args: cmd,
-            expected_exit: if args.smoke {
-                X64_INPUT_ECHO_EXIT
-            } else {
-                0
-            },
+            expected_exit: if args.smoke { X64_SHELL_HALT_EXIT } else { 0 },
             qmp_port,
             serial_port: None,
         })
@@ -133,11 +146,7 @@ fn machine_spec(args: &RunArgs, image_path: &Path, repo_root: &Path) -> Result<M
         }
         Ok(MachineSpec {
             args: cmd,
-            expected_exit: if args.smoke {
-                ARM64_INPUT_ECHO_EXIT
-            } else {
-                0
-            },
+            expected_exit: if args.smoke { ARM64_SHELL_HALT_EXIT } else { 0 },
             qmp_port: None,
             serial_port,
         })
@@ -184,12 +193,13 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
     let stdout_log = build_dir.join(format!("last-smoke-{}-stdout.log", args.arch));
     let stderr_log = build_dir.join(format!("last-smoke-{}-stderr.log", args.arch));
 
-    spec.args.extend(["-display".into(), "none".into(), "-no-reboot".into()]);
+    spec.args
+        .extend(["-display".into(), "none".into(), "-no-reboot".into()]);
 
-    let child_stdout = std::fs::File::create(&stdout_log)
-        .map_err(|e| format!("cannot create stdout log: {e}"))?;
-    let child_stderr = std::fs::File::create(&stderr_log)
-        .map_err(|e| format!("cannot create stderr log: {e}"))?;
+    let child_stdout =
+        std::fs::File::create(&stdout_log).map_err(|e| format!("cannot create stdout log: {e}"))?;
+    let child_stderr =
+        std::fs::File::create(&stderr_log).map_err(|e| format!("cannot create stderr log: {e}"))?;
     let mut child = std::process::Command::new(qemu)
         .args(&spec.args)
         .stdout(Stdio::from(child_stdout))
@@ -203,63 +213,97 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
     assert_smoke(status.code().unwrap_or(-1), spec.expected_exit, &stdout_log)
 }
 
-/// Waits for the child to boot, injects one key down the architecture's
-/// native input path, then waits for the exit.
+/// Waits for the child to boot, then drives the command script down the
+/// architecture's native input path: waits for each step's prerequisite
+/// marker on serial, types that step's command, and finally waits for the
+/// halt-induced exit.
 fn run_with_injection(
     child: &mut Child,
     spec: &MachineSpec,
     stdout_log: &Path,
     deadline: std::time::Instant,
 ) -> Result<ExitStatus, String> {
-    if let Some(port) = spec.qmp_port {
-        // x86_64: drive HMP over QMP and `sendkey` once the kernel reaches
-        // the console, exactly as a real keyboard would inject set-1 codes.
-        let mut qmp = QmpClient::connect(port)?;
-        wait_for_exit(child, deadline, stdout_log, |_child| {
-            if log_has_marker(stdout_log, CONSOLE_MARKER) {
-                qmp.human_monitor_command(&format!("sendkey {INJECT_KEY}"))?;
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        })
+    let (mut qmp, mut write_side, reader) = if let Some(port) = spec.qmp_port {
+        // x86_64: drive HMP over QMP and `sendkey`, exactly as a real
+        // keyboard would inject set-1 codes.
+        (Some(QmpClient::connect(port)?), None, None)
     } else if let Some(port) = spec.serial_port {
-        // aarch64: uart0 is a socket chardev; read it for the console marker
-        // and then type a key into the kernel's PL011 RX.
+        // aarch64: uart0 is a socket chardev; read it into the log and type
+        // raw bytes into the PL011 RX.
         let stream = connect_retry(port, "serial")?;
-        let mut write_side = stream
+        let write = stream
             .try_clone()
             .map_err(|e| format!("cloning serial socket: {e}"))?;
-        let got_console = Arc::new(AtomicBool::new(false));
-        let reader = spawn_serial_reader(stream, stdout_log, &got_console)?;
-        let status = wait_for_exit(child, deadline, stdout_log, |_child| {
-            if got_console.load(Ordering::SeqCst) {
-                write_side
-                    .write_all(INJECT_KEY.as_bytes())
-                    .map_err(|e| format!("writing '{INJECT_KEY}' to serial: {e}"))?;
-                Ok(true)
-            } else {
-                Ok(false)
-            }
-        });
+        let reader = spawn_serial_reader(stream, stdout_log)?;
+        (None, Some(write), Some(reader))
+    } else {
+        return Err("smoke mode requires an input-injection channel".into());
+    };
+
+    let mut step = 0usize;
+    let status = wait_for_exit(child, deadline, stdout_log, |_child| {
+        if step >= SCRIPT.len() {
+            return Ok(true);
+        }
+        let (prereq, command) = SCRIPT[step];
+        if log_has_marker(stdout_log, prereq) {
+            send_input(qmp.as_mut(), write_side.as_mut(), command)?;
+            step += 1;
+            Ok(step >= SCRIPT.len())
+        } else {
+            Ok(false)
+        }
+    });
+
+    if let Some(reader) = reader {
         reader
             .join()
             .map_err(|_| "serial reader thread panicked".to_string())?;
-        status
-    } else {
-        Err("smoke mode requires an input-injection channel".into())
     }
+    status
 }
 
-/// Polls the child until it exits or the deadline passes; calls `inject`
-/// until one call reports it acted, then leaves it alone.
+/// Types `command` down the active input channel, pacing keystrokes so the
+/// arch controller/FIFO can drain between keys.
+fn send_input(
+    qmp: Option<&mut QmpClient>,
+    serial: Option<&mut TcpStream>,
+    command: &str,
+) -> Result<(), String> {
+    if let Some(qmp) = qmp {
+        for c in command.chars() {
+            let hmp = match c {
+                '\r' => "sendkey ret".to_string(),
+                ' ' => "sendkey spc".to_string(),
+                _ => format!("sendkey {c}"),
+            };
+            qmp.human_monitor_command(&hmp)?;
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    } else if let Some(stream) = serial {
+        // PL011 has a 16-byte RX FIFO; small chunks with sleeps keep the
+        // polled write from overflowing while the guest drains each byte.
+        for chunk in command.as_bytes().chunks(4) {
+            stream
+                .write_all(chunk)
+                .map_err(|e| format!("writing command to serial: {e}"))?;
+            std::thread::sleep(Duration::from_millis(25));
+        }
+    } else {
+        return Err("smoke mode requires an input-injection channel".into());
+    }
+    Ok(())
+}
+
+/// Polls the child until it exits or the deadline passes; calls `inject` until
+/// it reports no more input is pending.
 fn wait_for_exit(
     child: &mut Child,
     deadline: std::time::Instant,
     stdout_log: &Path,
     mut inject: impl FnMut(&mut Child) -> Result<bool, String>,
 ) -> Result<ExitStatus, String> {
-    let mut injected = false;
+    let mut done = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|e| format!("wait failed: {e}"))? {
             return Ok(status);
@@ -272,8 +316,8 @@ fn wait_for_exit(
                 tail(stdout_log)
             ));
         }
-        if !injected && inject(child)? {
-            injected = true;
+        if !done && inject(child)? {
+            done = true;
         }
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -314,19 +358,12 @@ fn connect_retry(port: u16, what: &str) -> Result<TcpStream, String> {
     ))
 }
 
-/// Appends everything the serial socket emits to the smoke log, flagging the
-/// console marker as soon as the kernel reaches it.
-fn spawn_serial_reader(
-    stream: TcpStream,
-    log: &Path,
-    got_console: &Arc<AtomicBool>,
-) -> Result<JoinHandle<()>, String> {
+/// Appends everything the serial socket emits to the smoke log.
+fn spawn_serial_reader(stream: TcpStream, log: &Path) -> Result<JoinHandle<()>, String> {
     let log = log.to_path_buf();
-    let flag = Arc::clone(got_console);
     Ok(std::thread::spawn(move || {
         let mut serial = stream;
         let mut buffer = [0u8; 4096];
-        let mut window: Vec<u8> = Vec::new();
         let mut sink = std::fs::OpenOptions::new()
             .append(true)
             .create(true)
@@ -341,13 +378,6 @@ fn spawn_serial_reader(
             {
                 break;
             }
-            window.extend_from_slice(&buffer[..n]);
-            if window.len() > WINDOW_MAX {
-                window.drain(..window.len() - WINDOW_MAX);
-            }
-            if String::from_utf8_lossy(&window).contains(CONSOLE_MARKER) {
-                flag.store(true, Ordering::SeqCst);
-            }
         }
         if let Ok(sink) = sink.as_mut() {
             let _ = sink.flush();
@@ -361,8 +391,10 @@ fn assert_smoke(code: i32, expected: i32, stdout_log: &Path) -> Result<(), Strin
         BOOT_MARKER,
         FRAMEBUFFER_MARKER,
         CONSOLE_MARKER,
-        UPTIME_OK_MARKER,
-        INPUT_OK_MARKER,
+        HELP_RESPONSE_MARKER,
+        UNKNOWN_RESPONSE_MARKER,
+        UPTIME_RESPONSE_MARKER,
+        HALT_RESPONSE_MARKER,
     ] {
         if !serial.contains(marker) {
             return Err(format!(
@@ -378,7 +410,7 @@ fn assert_smoke(code: i32, expected: i32, stdout_log: &Path) -> Result<(), Strin
         ));
     }
     steps::ok(&format!(
-        "serial banners + echoed '{INJECT_KEY}' + '{INPUT_OK_MARKER}' asserted + clean exit code {code}"
+        "serial banners + shell commands (help/unknown/uptime/halt) dispatched + clean exit code {code}"
     ));
     println!("SMOKE PASSED");
     Ok(())

@@ -48,10 +48,12 @@ decision log.
   `cargo test -p ferric-unsafe-core --lib` cover the pure-logic modules
   (font parsing, text grid, log filtering, sync primitives, driver register
   semantics against mock MMIO, Limine ABI layout, MMU descriptors).
-- **Smoke boots**: `cargo xtask check` builds the dual-arch image and boots
-  both kernels headless in QEMU, asserting serial banner markers
-  (`BOOT OK`, `FRAMEBUFFER OK`, `Hello from Ferric-K!`, real-time `UP`
-  readouts, `UPTIME OK`) and a clean exit per architecture: code 225 on
-  x86_64, 112 on aarch64.
+- **Smoke boots**: `cargo xtask check` builds the dual-arch image, boots
+  both kernels headless in QEMU, and *drives the interactive shell* over each
+  arch's native input path (QMP `sendkey` on x86_64, the uart0 socket chardev
+  on aarch64). It asserts the boot markers (`BOOT OK`, `FRAMEBUFFER OK`,
+  `Hello from Ferric-K!`) and shell response markers (`help` output, `unknown
+  command`, `Uptime:`, `HALT`), then checks the clean `halt` exit code per
+  architecture: 261 on x86_64, 130 on aarch64.
 - **Panic demo**: `cargo xtask panic-demo` exercises the red-screen crash
   panel path on both architectures.

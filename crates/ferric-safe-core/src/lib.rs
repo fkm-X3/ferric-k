@@ -6,12 +6,16 @@
 
 pub mod font;
 pub mod grid;
+pub mod line_editor;
 pub mod log;
 pub mod scancodes;
+pub mod shell;
 pub mod terminal;
 
 pub use ferric_api::{Key, KeyEvent, Rgb};
 pub use font::Font;
 pub use grid::{Cell, GlyphStyle, Surface, TextGrid};
+pub use line_editor::{LineAction, LineEditor, MAX_LINE_CHARS};
 pub use scancodes::ScancodeDecoder;
+pub use shell::{Command, parse_command};
 pub use terminal::terminal_byte_to_key;

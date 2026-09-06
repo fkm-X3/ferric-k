@@ -1,6 +1,6 @@
 //! One poll surface over whatever input device the architecture has: the
 //! PS/2 keyboard of a PC, the terminal RX on the PL011 of a virt board.
-//! The console's soak loop drains this in between renders.
+//! The console's shell loop drains this in between renders.
 
 use ferric_api::KeyEvent;
 

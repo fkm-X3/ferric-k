@@ -51,7 +51,9 @@ pub fn run(repo_root: &Path, args: ExceptionDemoArgs) -> Result<(), String> {
         boot_and_assert_exception(repo_root, arch, &img, args.smoke_timeout_sec)?;
     }
 
-    println!("\nEXCEPTION DEMO PASSED: induced exception diagnostic rendered + serialized on both arches.");
+    println!(
+        "\nEXCEPTION DEMO PASSED: induced exception diagnostic rendered + serialized on both arches."
+    );
     Ok(())
 }
 
