@@ -67,11 +67,10 @@ struct MachineSpec {
     serial_port: Option<u16>,
 }
 
-/// Returns the fastest accelerator this QEMU binary was built with (`whpx`
-/// under Hyper-V, `hvf` on macOS, `kvm` on Linux), or `None` when only TCG is
-/// available (QEMU's default). Probing is required because QEMU rejects
-/// accelerator *lists* like `whpx:tcg` with "invalid accelerator" rather than
-/// falling back.
+/// Fastest accelerator that can actually start a guest on this host (`whpx`
+/// under working Hyper-V, `hvf` on macOS, `kvm` on Linux), else `None` for
+/// TCG. QEMU rejects accelerator *lists*, so each candidate is booted in
+/// minimal form to confirm it survives machine init.
 fn detect_accel(qemu: &str) -> Result<Option<String>, String> {
     let out = std::process::Command::new(qemu)
         .args(["-accel", "help"])
@@ -84,11 +83,44 @@ fn detect_accel(qemu: &str) -> Result<Option<String>, String> {
         .map(str::to_owned)
         .collect();
     for want in ["whpx", "hvf", "kvm"] {
-        if tokens.iter().any(|t| t == want) {
+        if tokens.iter().any(|t| t == want) && probe_accel(qemu, want) {
             return Ok(Some(want.to_owned()));
         }
     }
     Ok(None)
+}
+
+/// Starts a paused q35 VM under `accel`; a usable accelerator idles until
+/// killed, an unavailable one (e.g. `kvm` with no `/dev/kvm`) exits during
+/// startup.
+fn probe_accel(qemu: &str, accel: &str) -> bool {
+    let Ok(mut child) = std::process::Command::new(qemu)
+        .args([
+            "-accel",
+            accel,
+            "-machine",
+            "q35",
+            "-m",
+            "64",
+            "-display",
+            "none",
+            "-nodefaults",
+            "-S",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+    else {
+        return false;
+    };
+    std::thread::sleep(Duration::from_millis(800));
+    let alive = child.try_wait().map(|s| s.is_none()).unwrap_or(false);
+    if alive {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    alive
 }
 
 /// Builds the QEMU command line; `expected_exit` is only meaningful with
