@@ -6,6 +6,18 @@
 #![cfg_attr(not(test), no_std)]
 // linkage backs the weak mem* shims in `mem.rs`.
 #![cfg_attr(not(test), feature(linkage))]
+// alloc_error_handler gates the kernel-only heap-exhaustion handler; host
+// builds use the std allocator's own handler.
+#![cfg_attr(
+    all(
+        not(test),
+        target_os = "none",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    ),
+    feature(alloc_error_handler)
+)]
+
+extern crate alloc;
 
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod app;
@@ -14,6 +26,7 @@ pub mod clock;
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod console;
 pub mod framebuffer;
+pub mod heap;
 pub mod limine;
 pub mod log;
 #[cfg(all(
@@ -64,6 +77,10 @@ pub mod mmu;
 /// Serial proof line emitted once the color-bar self-test has passed.
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
+
+/// Serial proof line emitted once the heap is installed and exercised.
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub const HEAP_OK_MARKER: &str = "HEAP OK\n";
 
 /// Wakes on the next interrupt: `hlt` on x86_64, `wfi` on aarch64; returns
 /// as soon as one is delivered.
@@ -142,6 +159,10 @@ pub fn boot() -> ! {
             }
             serial::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
 
+            crate::heap::install_from_boot_info(&info);
+            crate::heap::heap_smoke();
+            serial::with_serial(|s| s.write_str(HEAP_OK_MARKER));
+
             #[cfg(feature = "panic-on-boot")]
             {
                 panic!("deliberate boot panic (panic-on-boot)")
@@ -193,6 +214,10 @@ pub fn boot() -> ! {
                 qemu::semihosting_exit(qemu::STATUS_FRAMEBUFFER_FAULT);
             }
             pl011::with_serial(|s| s.write_str(FRAMEBUFFER_OK_MARKER));
+
+            crate::heap::install_from_boot_info(&info);
+            crate::heap::heap_smoke();
+            pl011::with_serial(|s| s.write_str(HEAP_OK_MARKER));
 
             #[cfg(feature = "panic-on-boot")]
             {

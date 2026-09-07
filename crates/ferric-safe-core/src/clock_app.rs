@@ -4,7 +4,7 @@
 
 use embedded_graphics::{
     geometry::{Point, Size},
-    mono_font::{ascii::FONT_6X10, MonoTextStyle},
+    mono_font::{MonoTextStyle, ascii::FONT_6X10},
     pixelcolor::Rgb888,
     prelude::*,
     primitives::{Circle, Line, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle},
@@ -73,7 +73,7 @@ impl ClockWindow {
         self.y = (self.y + dy).max(0).min(max_y);
     }
 
-    /// Paints the window: title bar, rounded border, analog face, hands, 
+    /// Paints the window: title bar, rounded border, analog face, hands,
     /// and the digital readout for `time`.
     pub fn draw<D>(&self, target: &mut D, time: TimeOfDay) -> Result<(), D::Error>
     where
@@ -81,10 +81,11 @@ impl ClockWindow {
     {
         let origin = Point::new(self.x, self.y);
         // Center the clock face within the window's main body, excluding the title bar
-        let center = origin + Point::new(
-            (WIDTH as i32) / 2, 
-            (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2
-        );
+        let center = origin
+            + Point::new(
+                (WIDTH as i32) / 2,
+                (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2,
+            );
 
         // Main window background
         Rectangle::new(origin, Size::new(WIDTH, HEIGHT))
@@ -287,7 +288,7 @@ mod tests {
 
         let cx = window.x + (WIDTH as i32) / 2;
         let cy = window.y + (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2;
-        
+
         // Second hand is on top, pointing straight up, and the center cap
         // covers the hand origins.
         assert_eq!(target.get(cx as u32, cy as u32 - SECOND_HAND), SECOND);
@@ -335,11 +336,11 @@ mod tests {
 
         let cx = window.x + (WIDTH as i32) / 2;
         let cy = window.y + (TITLE_BAR_HEIGHT as i32) + ((HEIGHT - TITLE_BAR_HEIGHT) as i32) / 2;
-        
+
         let text_top = cy + FACE_RADIUS as i32 + 12;
         let text_left = cx - (8 * FONT_6X10.character_size.width as i32) / 2;
         let mut lit = 0;
-        
+
         for y in text_top..text_top + FONT_6X10.character_size.height as i32 {
             for x in text_left..text_left + 48 {
                 if target.get(x as u32, y as u32) == DIGIT {

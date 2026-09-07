@@ -80,7 +80,7 @@ pub fn assemble(
         let target = target_for(name);
         if !p.is_file() {
             return Err(format!(
-                "{name} not found at {}. Build it first: cargo build --target targets/{target}.json -Zbuild-std=core,compiler_builtins -Zjson-target-spec",
+                "{name} not found at {}. Build it first: cargo build --target targets/{target}.json -Zbuild-std=core,alloc,compiler_builtins -Zjson-target-spec",
                 p.display()
             ));
         }

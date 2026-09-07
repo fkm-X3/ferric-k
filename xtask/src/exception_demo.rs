@@ -65,7 +65,7 @@ fn build_exception_kernel(repo_root: &Path, target: &str, target_dir: &Path) -> 
         .arg(&target_json)
         .arg("--features")
         .arg("exception-on-boot")
-        .arg("-Zbuild-std=core,compiler_builtins")
+        .arg("-Zbuild-std=core,alloc,compiler_builtins")
         .arg("-Zjson-target-spec")
         .env("CARGO_TARGET_DIR", target_dir)
         .current_dir(repo_root)

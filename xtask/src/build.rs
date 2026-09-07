@@ -6,7 +6,10 @@ use std::path::Path;
 
 /// Kernel-target builds need these flags explicitly per-invocation (a global
 /// [unstable] build-std would poison host builds). Matches check.rs.
-const KERNEL_CARGO_ARGS: [&str; 2] = ["-Zbuild-std=core,compiler_builtins", "-Zjson-target-spec"];
+const KERNEL_CARGO_ARGS: [&str; 2] = [
+    "-Zbuild-std=core,alloc,compiler_builtins",
+    "-Zjson-target-spec",
+];
 
 const TARGETS: [(&str, &str, u16, &str); 2] = [
     // (target, spec, e_machine, name)

@@ -8,7 +8,10 @@ use std::path::Path;
 
 /// Kernel-target builds need these flags explicitly per-invocation (a global
 /// [unstable] build-std would poison host builds).
-const KERNEL_CARGO_ARGS: [&str; 2] = ["-Zbuild-std=core,compiler_builtins", "-Zjson-target-spec"];
+const KERNEL_CARGO_ARGS: [&str; 2] = [
+    "-Zbuild-std=core,alloc,compiler_builtins",
+    "-Zjson-target-spec",
+];
 
 const EXPECTED_MACHINE: [(&str, u16, &str); 2] = [
     ("x86_64-ferric", 0x3E, "EM_X86_64"),
