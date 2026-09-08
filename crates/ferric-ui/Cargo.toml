@@ -1,0 +1,16 @@
+[package]
+name = "ferric-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Declarative Slint UI components compiled by slint-build; no_std + deny(unsafe)."
+build = "build.rs"
+
+[dependencies]
+slint.workspace = true
+
+[build-dependencies]
+slint-build = "~1.16"
+
+[lints]
+workspace = true

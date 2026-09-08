@@ -11,6 +11,9 @@ ferric-safe-core.workspace = true
 # no_std embedded drawing for the clock app; same deliberate exception as in
 # ferric-safe-core.
 embedded-graphics = { version = "0.8", default-features = false }
+# Slint GUI toolkit for the platform backend. Deliberate external runtime
+# dependency (rule 3 exception, logged in ARCHITECTURE.md).
+slint.workspace = true
 
 [features]
 # Boot-time deliberate panic to exercise the panic-handler path in QEMU.
