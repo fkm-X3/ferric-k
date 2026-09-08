@@ -423,6 +423,7 @@ fn run_command(line: &[char]) {
             println!("  arch     show the CPU architecture");
             println!("  panic    panic the kernel (test hook)");
             println!("  clock    open the graphical clock window");
+            println!("  gui      launch the Slint GUI");
             println!("  halt     power off the machine");
         }
         Command::Clear => CONSOLE.lock().clear_screen(),
@@ -449,6 +450,7 @@ fn run_command(line: &[char]) {
             // prompt is redrawn by the shell loop's `new_prompt`.
             CONSOLE.lock().render_now();
         }
+        Command::Gui => crate::gui::run_gui(),
         Command::Halt => {
             println!("HALT");
             exit_qemu(crate::qemu::STATUS_SHELL_HALT);

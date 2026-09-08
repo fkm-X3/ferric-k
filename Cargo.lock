@@ -1121,6 +1121,7 @@ dependencies = [
  "embedded-graphics",
  "ferric-api",
  "ferric-safe-core",
+ "ferric-ui",
  "slint",
 ]
 

@@ -166,6 +166,29 @@ impl FrameBuffer {
         self.height
     }
 
+    /// Bytes occupied by one pixel (bpp divided by 8).
+    pub fn bytes_per_pixel(&self) -> usize {
+        self.bytes_per_pixel
+    }
+
+    /// Bit-width of the red (index 0), green (1), or blue (2) channel mask.
+    pub fn channel_size(&self, channel: u8) -> u8 {
+        match channel {
+            0 => self.red.size,
+            1 => self.green.size,
+            _ => self.blue.size,
+        }
+    }
+
+    /// Bit-shift (from bit 0) of the red (0), green (1), or blue (2) channel.
+    pub fn channel_shift(&self, channel: u8) -> u8 {
+        match channel {
+            0 => self.red.shift,
+            1 => self.green.shift,
+            _ => self.blue.shift,
+        }
+    }
+
     fn encode_channel(mask: ChannelMask, value: u8) -> u64 {
         let max = (1u64 << mask.size) - 1;
         ((u64::from(value) * max) / 255) << mask.shift

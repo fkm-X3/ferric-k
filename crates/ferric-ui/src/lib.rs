@@ -8,3 +8,9 @@
 extern crate alloc;
 
 slint::include_modules!();
+
+/// Builds the top-level `MainWindow` component; panics only if Slint's
+/// backend setup failed.
+pub fn main_window() -> MainWindow {
+    MainWindow::new().expect("Slint MainWindow creation failed")
+}

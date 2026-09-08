@@ -19,6 +19,8 @@ pub enum Command<'a> {
     Panic,
     /// `clock`: open the graphical clock window.
     Clock,
+    /// `gui`: switch to the Slint GUI.
+    Gui,
     /// `halt`: power the machine off in the emulator.
     Halt,
     /// Anything else; carries the command name as typed (without arguments).
@@ -52,6 +54,8 @@ pub fn parse_command(line: &[char]) -> Command<'_> {
         Command::Panic
     } else if is_name(name, "clock") {
         Command::Clock
+    } else if is_name(name, "gui") {
+        Command::Gui
     } else if is_name(name, "halt") {
         Command::Halt
     } else {
@@ -107,6 +111,7 @@ mod tests {
         }
         assert_eq!(parse_command(&line("HALT")), Command::Halt);
         assert_eq!(parse_command(&line("CLOCK")), Command::Clock);
+        assert_eq!(parse_command(&line("GUI")), Command::Gui);
         assert_eq!(parse_command(&line("UPTIME")), Command::Uptime);
         assert_eq!(parse_command(&line("ECHO")), Command::Echo(&[]));
     }
@@ -117,6 +122,7 @@ mod tests {
         assert_eq!(parse_command(&line("clear all")), Command::Clear);
         assert_eq!(parse_command(&line("halt now")), Command::Halt);
         assert_eq!(parse_command(&line("clock soon")), Command::Clock);
+        assert_eq!(parse_command(&line("gui now")), Command::Gui);
     }
 
     #[test]

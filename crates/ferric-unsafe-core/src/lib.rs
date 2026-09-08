@@ -26,6 +26,8 @@ pub mod clock;
 #[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
 pub mod console;
 pub mod framebuffer;
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub mod gui;
 pub mod heap;
 pub mod limine;
 pub mod log;
@@ -35,6 +37,8 @@ pub mod log;
     any(target_arch = "x86_64", target_arch = "aarch64")
 ))]
 pub mod panic;
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+pub mod slint_platform;
 // Excluded on host: defining memcpy etc. would collide with the platform CRT
 // when linking the test harness.
 #[cfg(not(test))]
