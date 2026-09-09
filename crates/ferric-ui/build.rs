@@ -1,9 +1,15 @@
+use std::path::PathBuf;
+
 use slint_build::{CompilerConfiguration, EmbedResourcesKind, compile_with_config};
 
 fn main() {
-    // EmbedForSoftwareRenderer bundles the default TTF so the software
-    // renderer can rasterize text without a filesystem.
+    // EmbedForSoftwareRenderer bundles the TTF fonts as pre-rasterized glyph
+    // data so the software renderer can draw text without a filesystem. The
+    // bundled fonts (DejaVu Sans) live in the workspace-level `fonts/` dir and
+    // are referenced by bare name from the `.slint` via this include path.
+    let fonts_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fonts");
     let config =
         CompilerConfiguration::new().embed_resources(EmbedResourcesKind::EmbedForSoftwareRenderer);
+    let config = config.with_include_paths(vec![fonts_dir]);
     compile_with_config("ui/main.slint", config).unwrap();
 }
