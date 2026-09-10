@@ -100,3 +100,69 @@ impl Rgb {
         Self { r, g, b }
     }
 }
+
+/// Memory region kind, mirroring the Limine `LIMINE_MEMMAP_*` type constants.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MemoryRegionKind {
+    Usable,
+    Reserved,
+    AcpiReclaimable,
+    AcpiNvs,
+    BadMemory,
+    BootloaderReclaimable,
+    ExecutableAndModules,
+    Framebuffer,
+    ReservedMapped,
+    Unknown(u64),
+}
+
+/// A single region from the firmware memory map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemoryRegion {
+    pub base: u64,
+    pub length: u64,
+    pub kind: MemoryRegionKind,
+}
+
+impl MemoryRegion {
+    pub const fn new(base: u64, length: u64, kind: MemoryRegionKind) -> Self {
+        Self { base, length, kind }
+    }
+
+    /// End address (exclusive): `base + length`.
+    pub const fn end(&self) -> u64 {
+        self.base.wrapping_add(self.length)
+    }
+}
+
+/// Maximum number of memory regions the monitor can track.
+pub const MAX_MEMORY_REGIONS: usize = 32;
+
+/// A snapshot of hardware counters and firmware data for the monitor.
+#[derive(Clone, Debug)]
+pub struct MonitorSample {
+    /// Monotonic uptime in nanoseconds.
+    pub uptime_ns: u64,
+    /// Total timer tick count (wall-clock ticks since boot).
+    pub total_ticks: u64,
+    /// Ticks spent in the idle loop (`hlt`/`wfi`), for CPU-load computation.
+    pub idle_ticks: u64,
+    /// Firmware memory-map regions.
+    pub memory_regions: [MemoryRegion; MAX_MEMORY_REGIONS],
+    /// Number of valid entries in `memory_regions`.
+    pub memory_region_count: usize,
+}
+
+impl MonitorSample {
+    /// Returns the memory region slice (without the trailing zeroed entries).
+    pub fn regions(&self) -> &[MemoryRegion] {
+        &self.memory_regions[..self.memory_region_count.min(MAX_MEMORY_REGIONS)]
+    }
+}
+
+/// Arch-neutral provider of monitor samples; implemented per architecture
+/// in `ferric-unsafe-core`.
+pub trait MonitorSource {
+    /// Capture a snapshot of hardware counters and firmware data.
+    fn sample(&self) -> MonitorSample;
+}
