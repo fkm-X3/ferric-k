@@ -362,7 +362,15 @@ pub fn kmain() -> ! {
             .expect("framebuffer not initialized");
     CONSOLE.lock().set_geometry(fb_width, fb_height);
 
+    crate::slint_platform::init_platform();
+
     println!("Hello from Ferric-K!");
+
+    #[cfg(feature = "gui-on-boot")]
+    {
+        crate::gui::run_gui();
+        CONSOLE.lock().render_now();
+    }
     shell_loop();
 }
 
@@ -450,7 +458,10 @@ fn run_command(line: &[char]) {
             // prompt is redrawn by the shell loop's `new_prompt`.
             CONSOLE.lock().render_now();
         }
-        Command::Gui => crate::gui::run_gui(),
+        Command::Gui => {
+            crate::gui::run_gui();
+            CONSOLE.lock().render_now();
+        }
         Command::Halt => {
             println!("HALT");
             exit_qemu(crate::qemu::STATUS_SHELL_HALT);

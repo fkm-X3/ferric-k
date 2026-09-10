@@ -141,7 +141,7 @@ pub fn run(repo_root: &Path, args: CheckArgs) -> Result<(), String> {
     }
 
     println!(
-        "\nCHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ELF/Limine gates + host tests(safe-core,unsafe-core) + smoke boots(x86_64,aarch64) all green."
+        "\nCHECK PASSED: fmt + clippy(host,x86_64,aarch64) + build(x2) + ELF/Limine gates + host tests(safe-core,unsafe-core) + smoke boots(x86_64,aarch64) with GUI round-trip all green."
     );
     Ok(())
 }

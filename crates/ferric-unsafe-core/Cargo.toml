@@ -21,6 +21,8 @@ slint.workspace = true
 panic-on-boot = []
 # Boot-time deliberate divide-by-zero to exercise the exception-handler path.
 exception-on-boot = []
+# Launch the Slint GUI immediately at boot instead of the text console shell.
+gui-on-boot = []
 
 [lints]
 workspace = true
