@@ -432,6 +432,7 @@ fn run_command(line: &[char]) {
             println!("  panic    panic the kernel (test hook)");
             println!("  clock    open the graphical clock window");
             println!("  gui      launch the Slint GUI");
+            println!("  monitor  live hardware monitor");
             println!("  halt     power off the machine");
         }
         Command::Clear => CONSOLE.lock().clear_screen(),
@@ -460,6 +461,10 @@ fn run_command(line: &[char]) {
         }
         Command::Gui => {
             crate::gui::run_gui();
+            CONSOLE.lock().render_now();
+        }
+        Command::Monitor => {
+            crate::monitor::run_monitor();
             CONSOLE.lock().render_now();
         }
         Command::Halt => {

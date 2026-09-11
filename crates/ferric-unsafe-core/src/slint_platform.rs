@@ -11,7 +11,7 @@ use slint::platform::software_renderer::{
 };
 use slint::platform::{self, Key as SlintKey, Platform, PlatformError, WindowEvent};
 
-use crate::sync::OnceLock;
+use crate::sync::{OnceLock, Spinlock};
 use ferric_api::{Key, KeyEvent};
 
 /// Cached framebuffer layout consumed by [`FbPixel`] when encoding pixels,
@@ -30,21 +30,33 @@ struct FbLayout {
 
 static FB_LAYOUT: OnceLock<FbLayout> = OnceLock::new();
 
-/// A set-once cell for the single Slint window. The window is `!Send + !Sync`
-/// under Slint's `unsafe-single-threaded` mode; this wrapper declares that safe
-/// because the window is touched only from the GUI event-loop thread, never
-/// from interrupt context (the super-loop owns it end to end).
-pub struct WindowCell(OnceLock<Rc<MinimalSoftwareWindow>>);
+/// Owning cell for the current Slint window, replaced when the active
+/// component is constructed so each full-screen app renders its own window.
+/// The window is `!Send + !Sync` under Slint's `unsafe-single-threaded` mode;
+/// this wrapper declares that safe because the window is touched only from the
+/// GUI event-loop thread, never from interrupt context.
+pub struct WindowCell(Spinlock<Option<Rc<MinimalSoftwareWindow>>>);
 impl WindowCell {
     const fn new() -> Self {
-        Self(OnceLock::new())
+        Self(Spinlock::new(None))
+    }
+
+    /// Adopts `window` as the active one; a previously stored window is
+    /// dropped once its owning component is.
+    fn set(&self, window: Rc<MinimalSoftwareWindow>) {
+        *self.0.lock() = Some(window);
+    }
+
+    /// Clones the reference to the active window, if any.
+    fn get(&self) -> Option<Rc<MinimalSoftwareWindow>> {
+        self.0.lock().clone()
     }
 }
 // SAFETY: single-threaded GUI; see the struct doc — the window is only ever
 // accessed from the one GUI thread, so sharing it across threads is sound.
 unsafe impl Sync for WindowCell {}
 
-/// The single Slint window adapter, created on first component construction.
+/// The active Slint window adapter, replaced on each component construction.
 static WINDOW: WindowCell = WindowCell::new();
 
 /// The platform object handed to Slint.
@@ -53,8 +65,9 @@ struct FerricPlatform;
 impl Platform for FerricPlatform {
     fn create_window_adapter(&self) -> Result<Rc<dyn platform::WindowAdapter>, PlatformError> {
         let window = MinimalSoftwareWindow::new(RepaintBufferType::ReusedBuffer);
-        // Only the first `set` wins; a later component reuses the same window.
-        let _ = WINDOW.0.set(window.clone());
+        // Adopt the latest window so a fresh component renders on a fresh
+        // adapter; the previous window drops with its owning component.
+        WINDOW.set(window.clone());
         window.set_size(physical_size());
         window.show()?;
         Ok(window)
@@ -132,11 +145,10 @@ pub fn init_platform() {
         .expect("Slint platform already set or installation failed");
 }
 
-/// The live software-renderer window, already shown. Panics if accessed before
+/// The active software-renderer window, already shown. Panics if accessed before
 /// any component constructed the window (i.e. before `init_platform`).
-pub fn window() -> &'static MinimalSoftwareWindow {
+pub fn window() -> Rc<MinimalSoftwareWindow> {
     WINDOW
-        .0
         .get()
         .expect("Slint window created before platform init")
 }

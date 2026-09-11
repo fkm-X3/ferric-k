@@ -31,6 +31,8 @@ pub mod gui;
 pub mod heap;
 pub mod limine;
 pub mod log;
+#[cfg(all(not(test), any(target_arch = "x86_64", target_arch = "aarch64")))]
+pub mod monitor;
 #[cfg(all(
     target_os = "none",
     not(test),
@@ -87,8 +89,10 @@ pub const FRAMEBUFFER_OK_MARKER: &str = "FRAMEBUFFER OK\n";
 pub const HEAP_OK_MARKER: &str = "HEAP OK\n";
 
 /// Wakes on the next interrupt: `hlt` on x86_64, `wfi` on aarch64; returns
-/// as soon as one is delivered.
+/// as soon as one is delivered. The ticks elapsed during the sleep count
+/// toward the monitor's idle-tick total.
 pub fn wait_for_interrupt() {
+    let entered_ticks = crate::time::ticks();
     #[cfg(target_arch = "x86_64")]
     // SAFETY: `hlt` parks the CPU until an interrupt arrives (Intel SDM
     // Vol. 2A); returns when one is delivered.
@@ -102,6 +106,7 @@ pub fn wait_for_interrupt() {
     }
     #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
     core::hint::spin_loop();
+    crate::time::record_idle(crate::time::ticks().saturating_sub(entered_ticks));
 }
 
 /// Common early-boot path after bootloader handoff; still on the bootloader

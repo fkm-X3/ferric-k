@@ -1,0 +1,99 @@
+import "DejaVuSans.ttf";
+
+/// One memory-map row: kind, address range, size.
+component RegionRow {
+    in property <string> row-kind: "";
+    in property <string> row-range: "";
+    in property <string> row-size: "";
+
+    property <color> kind-color:
+        row-kind == "usable" ? #6fcf97 :
+        row-kind == "reserved" ? #e0826f :
+        row-kind == "framebuffer" ? #8a8ff2 :
+        row-kind == "bootloader" ? #7ea8e8 :
+        row-kind == "acpi-reclaim" ? #e8c26f :
+        row-kind == "exec+modules" ? #c9a7e8 : #9aa0b8;
+
+    HorizontalLayout {
+        spacing: 8px;
+        Text {
+            text: row-kind;
+            color: kind-color;
+            width: 96px;
+            font-size: 14px;
+        }
+        Text {
+            text: row-range;
+            color: #c6c9dd;
+            horizontal-alignment: left;
+            font-size: 14px;
+        }
+        Text {
+            text: row-size;
+            color: #8f94ad;
+            horizontal-alignment: right;
+            font-size: 14px;
+        }
+    }
+}
+
+export component MonitorWindow inherits Window {
+    preferred-width: 640px;
+    preferred-height: 480px;
+    background: #161621;
+    default-font-family: "DejaVu Sans";
+
+    in property <string> uptime-text: "";
+    in property <string> cpu-text: "";
+    in property <string> arch-text: "";
+    in property <string> region-count-text: "";
+    in property <string> total-usable-text: "";
+    in property <string> total-reserved-text: "";
+    in property <string> total-other-text: "";
+
+    // One entry per visible row; unused slots carry an empty kind/range and a
+    // dash size so the table reads as a table. Defaults keep the 16-row
+    // indexing safe before the first bound refresh.
+    in property <[string]> region-kinds: ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    in property <[string]> region-ranges: ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""];
+    in property <[string]> region-sizes: ["-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-"];
+
+    VerticalLayout {
+        padding: 12px;
+        spacing: 4px;
+
+        Text {
+            text: "FERRIC-K / HARDWARE MONITOR";
+            color: #ffd24a;
+            font-size: 20px;
+            font-weight: 700;
+        }
+        Text {
+            text: "uptime " + uptime-text;
+            color: white;
+            font-size: 16px;
+        }
+        Text {
+            text: "cpu " + cpu-text + "   |   arch " + arch-text + "   |   " + region-count-text;
+            color: #c6c9dd;
+            font-size: 16px;
+        }
+        Text {
+            text: "usable " + total-usable-text + "   reserved " + total-reserved-text + "   other " + total-other-text;
+            color: #8f94ad;
+            font-size: 14px;
+        }
+
+        for i in 16 : RegionRow {
+            row-kind: region-kinds[i];
+            row-range: region-ranges[i];
+            row-size: region-sizes[i];
+        }
+
+        Text {
+            text: "ESC: back to shell";
+            color: #5c607a;
+            font-size: 12px;
+        }
+    }
+}

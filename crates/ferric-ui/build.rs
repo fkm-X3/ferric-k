@@ -11,5 +11,8 @@ fn main() {
     let config =
         CompilerConfiguration::new().embed_resources(EmbedResourcesKind::EmbedForSoftwareRenderer);
     let config = config.with_include_paths(vec![fonts_dir]);
-    compile_with_config("ui/main.slint", config).unwrap();
+    // CompilerConfiguration is not re-cloned between runs; each entry point
+    // gets its own `compile_with_config` so `include_modules!` sees both.
+    compile_with_config("ui/main.slint", config.clone()).unwrap();
+    compile_with_config("ui/monitor.slint", config).unwrap();
 }

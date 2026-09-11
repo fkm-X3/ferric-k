@@ -16,6 +16,8 @@ const FRAMEBUFFER_MARKER: &str = "FRAMEBUFFER OK";
 const CONSOLE_MARKER: &str = "Hello from Ferric-K!";
 const SLINT_MARKER: &str = "SLINT OK";
 const GUI_EXIT_MARKER: &str = "GUI EXIT OK";
+const MONITOR_MARKER: &str = "MONITOR OK";
+const MONITOR_EXIT_MARKER: &str = "MONITOR EXIT OK";
 /// Stall watchdog for the smoke driver: re-sends a command whose effect has
 /// not shown up on serial within this window (a dropped key under a loaded
 /// runner would otherwise wedge the smoke forever).
@@ -31,11 +33,15 @@ const UPTIME_RESPONSE_MARKER: &str = "Uptime:";
 const HALT_RESPONSE_MARKER: &str = "HALT";
 
 /// Command script the smoke drives: each step waits for its marker on serial,
-/// then types the next command (commands carry their own Enter key).
+/// then types the next command (commands carry their own Enter key). The
+/// monitor round-trip mirrors the GUI one; its exit marker is distinct so the
+/// script cannot advance on the GUI's stale exit line.
 const SCRIPT: &[(&str, &str)] = &[
     (CONSOLE_MARKER, "gui\r"),
     (SLINT_MARKER, "\x1B"),
-    (GUI_EXIT_MARKER, "help\r"),
+    (GUI_EXIT_MARKER, "monitor\r"),
+    (MONITOR_MARKER, "\x1B"),
+    (MONITOR_EXIT_MARKER, "help\r"),
     (HELP_RESPONSE_MARKER, "xyz\r"),
     (UNKNOWN_RESPONSE_MARKER, "uptime\r"),
     (UPTIME_RESPONSE_MARKER, "halt\r"),
@@ -497,6 +503,8 @@ fn assert_smoke(code: i32, expected: i32, stdout_log: &Path) -> Result<(), Strin
         CONSOLE_MARKER,
         SLINT_MARKER,
         GUI_EXIT_MARKER,
+        MONITOR_MARKER,
+        MONITOR_EXIT_MARKER,
         HELP_RESPONSE_MARKER,
         UNKNOWN_RESPONSE_MARKER,
         UPTIME_RESPONSE_MARKER,
@@ -516,7 +524,7 @@ fn assert_smoke(code: i32, expected: i32, stdout_log: &Path) -> Result<(), Strin
         ));
     }
     steps::ok(&format!(
-        "serial banners + GUI round-trip + shell commands (help/unknown/uptime/halt) dispatched + clean exit code {code}"
+        "serial banners + GUI round-trip + monitor round-trip + shell commands (help/unknown/uptime/halt) dispatched + clean exit code {code}"
     ));
     println!("SMOKE PASSED");
     Ok(())

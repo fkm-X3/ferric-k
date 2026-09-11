@@ -10,6 +10,10 @@ pub const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
 
+/// Interval between a `hlt`/`wfi` entry and its wake, in whole wall-clock
+/// ticks; feeds the monitor's CPU-load proxy (`idle / total` of an interval).
+static IDLE_TICKS: AtomicU64 = AtomicU64::new(0);
+
 /// Records one hardware timer tick (called from the IRQ handler only).
 pub fn bump_tick() {
     TICKS.fetch_add(1, Ordering::Relaxed);
@@ -18,6 +22,16 @@ pub fn bump_tick() {
 /// Total ticks recorded so far; the per-arch source maps this to time.
 pub fn ticks() -> u64 {
     TICKS.load(Ordering::Relaxed)
+}
+
+/// Total ticks spent sleeping in `wait_for_interrupt`.
+pub fn idle_ticks() -> u64 {
+    IDLE_TICKS.load(Ordering::Relaxed)
+}
+
+/// Adds `delta` ticks counted while the CPU slept.
+pub fn record_idle(delta: u64) {
+    IDLE_TICKS.fetch_add(delta, Ordering::Relaxed);
 }
 
 /// Converts whole `ticks` of a `freq_hz` counter to nanoseconds (128-bit
@@ -126,5 +140,12 @@ mod tests {
         // intermediate would overflow seconds-by-2^32.
         assert_eq!(ticks_to_ns(1, 1), 1_000_000_000);
         assert_eq!(ticks_to_ns(1 << 32, 1 << 32), 1_000_000_000);
+    }
+
+    #[test]
+    fn idle_ticks_accumulate() {
+        record_idle(3);
+        record_idle(4);
+        assert_eq!(idle_ticks(), 7);
     }
 }

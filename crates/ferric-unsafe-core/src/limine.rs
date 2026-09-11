@@ -222,6 +222,39 @@ pub struct MemmapEntry {
     pub entry_type: u64,
 }
 
+impl MemmapEntry {
+    /// Maps the raw `entry_type` to the API's arch-neutral kind.
+    pub const fn to_region(&self) -> ferric_api::MemoryRegion {
+        ferric_api::MemoryRegion::new(
+            self.base,
+            self.length,
+            match self.entry_type {
+                memmap_type::USABLE => ferric_api::MemoryRegionKind::Usable,
+                memmap_type::RESERVED => ferric_api::MemoryRegionKind::Reserved,
+                memmap_type::ACPI_RECLAIMABLE => ferric_api::MemoryRegionKind::AcpiReclaimable,
+                memmap_type::ACPI_NVS => ferric_api::MemoryRegionKind::AcpiNvs,
+                memmap_type::BAD_MEMORY => ferric_api::MemoryRegionKind::BadMemory,
+                memmap_type::BOOTLOADER_RECLAIMABLE => {
+                    ferric_api::MemoryRegionKind::BootloaderReclaimable
+                }
+                memmap_type::EXECUTABLE_AND_MODULES => {
+                    ferric_api::MemoryRegionKind::ExecutableAndModules
+                }
+                memmap_type::FRAMEBUFFER => ferric_api::MemoryRegionKind::Framebuffer,
+                memmap_type::RESERVED_MAPPED => ferric_api::MemoryRegionKind::ReservedMapped,
+                other => ferric_api::MemoryRegionKind::Unknown(other),
+            },
+        )
+    }
+}
+
+/// The bootloader's memory-map entries, when the feature responded. Stays a
+/// fixed map for the kernel's lifetime (bootloader-reclaimable, never
+/// reclaimed by us).
+pub fn memmap_entries() -> Option<&'static [&'static MemmapEntry]> {
+    MEMMAP_REQUEST.response().map(|r| r.entries())
+}
+
 /// Start delimiter, 32 bytes, 8-byte aligned per protocol.
 #[repr(C, align(8))]
 struct RequestsStartMarker([u64; 4]);
@@ -349,6 +382,63 @@ mod abi_layout_tests {
             super::base_revision(),
             Err(BaseRevisionNotAccepted)
         ));
+    }
+
+    #[test]
+    fn memmap_entry_maps_types_to_regions() {
+        let cases = [
+            (memmap_type::USABLE, ferric_api::MemoryRegionKind::Usable),
+            (
+                memmap_type::RESERVED,
+                ferric_api::MemoryRegionKind::Reserved,
+            ),
+            (
+                memmap_type::ACPI_RECLAIMABLE,
+                ferric_api::MemoryRegionKind::AcpiReclaimable,
+            ),
+            (memmap_type::ACPI_NVS, ferric_api::MemoryRegionKind::AcpiNvs),
+            (
+                memmap_type::BAD_MEMORY,
+                ferric_api::MemoryRegionKind::BadMemory,
+            ),
+            (
+                memmap_type::BOOTLOADER_RECLAIMABLE,
+                ferric_api::MemoryRegionKind::BootloaderReclaimable,
+            ),
+            (
+                memmap_type::EXECUTABLE_AND_MODULES,
+                ferric_api::MemoryRegionKind::ExecutableAndModules,
+            ),
+            (
+                memmap_type::FRAMEBUFFER,
+                ferric_api::MemoryRegionKind::Framebuffer,
+            ),
+            (
+                memmap_type::RESERVED_MAPPED,
+                ferric_api::MemoryRegionKind::ReservedMapped,
+            ),
+        ];
+        for (raw, expected) in cases {
+            let entry = MemmapEntry {
+                base: 0x1000,
+                length: 0x2000,
+                entry_type: raw,
+            };
+            let region = entry.to_region();
+            assert_eq!(
+                region,
+                ferric_api::MemoryRegion::new(0x1000, 0x2000, expected)
+            );
+        }
+        let unknown = MemmapEntry {
+            base: 0,
+            length: 1,
+            entry_type: 0x5a5a,
+        };
+        assert_eq!(
+            unknown.to_region(),
+            ferric_api::MemoryRegion::new(0, 1, ferric_api::MemoryRegionKind::Unknown(0x5a5a))
+        );
     }
 
     #[test]

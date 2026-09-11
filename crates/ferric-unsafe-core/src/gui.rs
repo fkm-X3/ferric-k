@@ -19,6 +19,25 @@ pub const GUI_EXIT_MARKER: &str = "GUI EXIT OK\n";
 /// Reusable render buffer, grown to the framebuffer size on first frame.
 static RENDER_BUFFER: Spinlock<alloc::vec::Vec<FbPixel>> = Spinlock::new(alloc::vec::Vec::new());
 
+/// Renders `window` into the framebuffer via the software renderer; returns
+/// `true` when a new frame was produced.
+pub(crate) fn render_and_blit(
+    window: &slint::platform::software_renderer::MinimalSoftwareWindow,
+    w: u32,
+    h: u32,
+) -> bool {
+    window.draw_if_needed(|renderer| {
+        let w = w as usize;
+        let h = h as usize;
+        let mut buffer = RENDER_BUFFER.lock();
+        if buffer.len() < w * h {
+            buffer.resize(w * h, FbPixel::default());
+        }
+        let _ = renderer.render(&mut buffer[..w * h], w);
+        slint_platform::blit_to_framebuffer(&buffer[..w * h], w as u32, h as u32);
+    })
+}
+
 /// Runs the full-screen Slint GUI, returning when Escape is pressed. The
 /// caller must repaint the console over the framebuffer afterwards.
 pub fn run_gui() {
@@ -42,18 +61,7 @@ pub fn run_gui() {
                 window.dispatch_event(win_event);
             }
         }
-        let rendered = window.draw_if_needed(|renderer| {
-            let w = w as usize;
-            let h = h as usize;
-            let mut buffer = RENDER_BUFFER.lock();
-            if buffer.len() < w * h {
-                buffer.resize(w * h, FbPixel::default());
-            }
-            let region = renderer.render(&mut buffer[..w * h], w);
-            let _ = region;
-            slint_platform::blit_to_framebuffer(&buffer[..w * h], w as u32, h as u32);
-        });
-        if rendered && !ok_emitted {
+        if render_and_blit(&window, w, h) && !ok_emitted {
             slint_platform::write_serial(SLINT_OK_MARKER);
             ok_emitted = true;
         }
