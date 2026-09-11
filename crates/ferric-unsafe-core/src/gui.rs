@@ -1,8 +1,8 @@
 //! The GUI super-loop: creates the top-level Slint component, then drives the
 //! platform's own event loop — poll input, update timers/animations, redraw
-//! the software renderer into the framebuffer, wait for the next interrupt.
-//! Returns to the caller when Escape is pressed; the caller repaints the
-//! console over the framebuffer.
+//! the software renderer into the framebuffer, spin while idle. Returns to the
+//! caller when Escape is pressed; the caller repaints the console over the
+//! framebuffer.
 
 use crate::slint_platform::{self, FbPixel};
 use crate::sync::Spinlock;
@@ -57,6 +57,6 @@ pub fn run_gui() {
             slint_platform::write_serial(SLINT_OK_MARKER);
             ok_emitted = true;
         }
-        crate::wait_for_interrupt();
+        core::hint::spin_loop();
     }
 }
