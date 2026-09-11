@@ -16,6 +16,11 @@ const FRAMEBUFFER_MARKER: &str = "FRAMEBUFFER OK";
 const CONSOLE_MARKER: &str = "Hello from Ferric-K!";
 const SLINT_MARKER: &str = "SLINT OK";
 const GUI_EXIT_MARKER: &str = "GUI EXIT OK";
+/// Stall watchdog for the smoke driver: re-sends a command whose effect has
+/// not shown up on serial within this window (a dropped key under a loaded
+/// runner would otherwise wedge the smoke forever).
+const RETRY_GRACE: Duration = Duration::from_secs(10);
+const MAX_ATTEMPTS: u32 = 3;
 /// Marker the `help` output carries, proving a typed command was dispatched.
 const HELP_RESPONSE_MARKER: &str = "power off";
 /// Marker the shell prints for a command it does not recognize.
@@ -238,9 +243,11 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
     let mut spec = machine_spec(&args, &image_path, repo_root)?;
 
     // aarch64 guests stay on TCG: no host accel runs cross-architecture guests.
+    let mut accel_note = String::new();
     if args.arch == "x64"
         && let Some(accel) = detect_accel(qemu)?
     {
+        accel_note = format!(", accel={accel}");
         spec.args.push("-accel".into());
         spec.args.push(accel);
     }
@@ -255,7 +262,7 @@ pub fn run(repo_root: &Path, args: RunArgs) -> Result<(), String> {
         return Ok(());
     }
 
-    steps::note("smoke boot (headless)");
+    steps::note(&format!("smoke boot (headless{accel_note})"));
     let build_dir = repo_root.join("build");
     std::fs::create_dir_all(&build_dir).map_err(|e| format!("cannot create {build_dir:?}: {e}"))?;
     let stdout_log = build_dir.join(format!("last-smoke-{}-stdout.log", args.arch));
@@ -309,18 +316,44 @@ fn run_with_injection(
     };
 
     let mut step = 0usize;
+    let mut typed = false;
+    let mut typed_at = std::time::Instant::now();
+    let mut attempts = 0u32;
     let status = wait_for_exit(child, deadline, stdout_log, |_child| {
         if step >= SCRIPT.len() {
             return Ok(true);
         }
         let (prereq, command) = SCRIPT[step];
-        if log_has_marker(stdout_log, prereq) {
-            send_input(qmp.as_mut(), write_side.as_mut(), command)?;
-            step += 1;
-            Ok(step >= SCRIPT.len())
-        } else {
-            Ok(false)
+        if !log_has_marker(stdout_log, prereq) {
+            return Ok(false);
         }
+        if !typed {
+            send_input(qmp.as_mut(), write_side.as_mut(), command)?;
+            typed = true;
+            typed_at = std::time::Instant::now();
+            attempts = 1;
+            return Ok(false);
+        }
+        if SCRIPT
+            .get(step + 1)
+            .is_some_and(|(next, _)| log_has_marker(stdout_log, next))
+        {
+            step += 1;
+            typed = false;
+            attempts = 0;
+            return Ok(step >= SCRIPT.len());
+        }
+        // Step 0 (gui\r) is never re-sent: a second launch while one is
+        // starting is worse than a stall.
+        if step > 0
+            && attempts < MAX_ATTEMPTS
+            && typed_at.elapsed() >= RETRY_GRACE
+        {
+            send_input(qmp.as_mut(), write_side.as_mut(), command)?;
+            attempts += 1;
+            typed_at = std::time::Instant::now();
+        }
+        Ok(false)
     });
 
     if let Some(reader) = reader {
@@ -372,6 +405,7 @@ fn wait_for_exit(
     stdout_log: &Path,
     mut inject: impl FnMut(&mut Child) -> Result<bool, String>,
 ) -> Result<ExitStatus, String> {
+    let started_at = std::time::Instant::now();
     let mut done = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|e| format!("wait failed: {e}"))? {
@@ -381,7 +415,8 @@ fn wait_for_exit(
             let _ = child.kill();
             let _ = child.wait();
             return Err(format!(
-                "kernel produced no serial banner + exit within the timeout (killed QEMU). Serial tail:\n{}",
+                "kernel produced no serial banner + exit within the timeout ({}s elapsed, killed QEMU). Serial tail:\n{}",
+                started_at.elapsed().as_secs(),
                 tail(stdout_log)
             ));
         }
