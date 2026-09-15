@@ -1,5 +1,7 @@
 # Ferric-K
 
+Full OS project [here](https://github.com/Iron-Based/Ferric-OS)
+
 A bare-metal Rust kernel with a compiler-enforced safe/unsafe split, targeting
 x86_64 and aarch64 from day one, booted by Limine, rendering text to a linear
 framebuffer.
